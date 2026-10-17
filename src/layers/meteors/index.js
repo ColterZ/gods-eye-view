@@ -35,4 +35,5 @@ export { createSource } from './source.js';
 export { createRendering } from './rendering.js';
 export { createControls } from './controls.js';
 export { createLifecycle } from './lifecycle.js';
+export * from './model.js';
 export * from './policy.js';

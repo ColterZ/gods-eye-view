@@ -1,20 +1,27 @@
-import { API_ENDPOINT, MAX_EVENTS } from './policy.js';
+import { MAX_EVENTS, COVERAGE } from './policy.js';
 
-export function createSource({ layerState, services, components, config }) {
-  async function fetchEvents(signal) {
-    const response = await fetch(API_ENDPOINT, {
-      signal,
-      headers: { Accept: 'application/json' },
-    });
-    if (!response.ok) {
-      throw new Error(`fireball_fetch_failed_${response.status}`);
-    }
-    const payload = await response.json();
-    if (!Array.isArray(payload.events)) {
-      throw new Error('invalid_fireball_payload');
-    }
-    return payload.events.slice(0, MAX_EVENTS);
+export function createSource({ layerState, services, components, config, feed }) {
+  async function fetchSnapshot(signal) {
+    const snapshot = await feed.getSnapshot({}, { signal });
+    const records = Array.isArray(snapshot?.records)
+      ? snapshot.records
+      : Array.isArray(snapshot?.events)
+        ? snapshot.events
+        : [];
+    const events = records.slice(0, MAX_EVENTS);
+    return {
+      events,
+      source: snapshot?.source || 'NASA/JPL CNEOS',
+      coverage: snapshot?.coverage || COVERAGE,
+      fetchedAt: snapshot?.fetchedAt || Date.now(),
+      latestObservationTime:
+        snapshot?.latestObservationTime ||
+        (events.length > 0 ? events[0].eventTime : null),
+      stale: Boolean(snapshot?.stale),
+      unavailable: Boolean(snapshot?.unavailable),
+      reason: snapshot?.reason || null,
+    };
   }
 
-  return { fetchEvents };
+  return { fetchSnapshot };
 }

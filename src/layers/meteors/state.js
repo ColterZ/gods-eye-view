@@ -1,3 +1,5 @@
+import { DEFAULT_TIME_WINDOW } from './policy.js';
+
 export function createMeteorsState({ services, config }) {
   const layerState = {};
 
@@ -7,16 +9,35 @@ export function createMeteorsState({ services, config }) {
   layerState._destroyed = false;
   layerState._loading = false;
   layerState._stale = false;
+  layerState._unavailable = false;
   layerState._error = null;
 
+  layerState._snapshot = null;
   layerState._events = [];
+  layerState._filteredEvents = [];
+  layerState._timeWindow = DEFAULT_TIME_WINDOW;
   layerState._selectedEventId = null;
+  layerState._selectionIntent = 'auto';
   layerState._lastUpdate = null;
+  layerState._latestObservationTime = null;
+
+  layerState._listener = null;
+  layerState._runNavigation = null;
+  layerState._navigationGeneration = 0;
+  layerState._request = null;
 
   layerState._clickHandler = null;
   layerState._preRenderRemover = null;
 
   layerState._entityById = new Map();
+  layerState._pickEventIdByEntityId = new Map();
+  layerState._spheresByEventId = new Map();
+  layerState._horizonItems = [];
+  layerState._renderedItems = [];
+
+  layerState.notify = () => {
+    layerState._listener?.();
+  };
 
   return layerState;
 }

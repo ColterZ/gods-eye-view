@@ -23,7 +23,7 @@ import { createApplicationAlpr } from './layers/alprCameras.js';
 import { createApplicationLocalAdsb } from './layers/localAdsb.js';
 import { createApplicationAwareness } from './layers/militaryAwareness.js';
 import { createApplicationFirms } from './layers/firms.js';
-import { createMeteorsLayer } from '../layers/meteors/index.js';
+import { createApplicationMeteors } from './layers/meteors.js';
 import { createApplicationEarthquakes } from './layers/earthquakes.js';
 import { createApplicationAirQuality } from './layers/airQuality.js';
 import { createApplicationFirePerimeters } from './layers/perimeters.js';
@@ -177,7 +177,7 @@ export function createApplicationCatalog({
           source: 'NASA FIRMS · LIVE',
           feed: sources.firms,
         }),
-        createMeteorsLayer({
+        createApplicationMeteors({
           surface,
           id: 'meteors',
           name: 'Fireballs',
