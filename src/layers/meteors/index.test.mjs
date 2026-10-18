@@ -887,4 +887,63 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     assert.equal(mockDirector._project.scenes.length, 3);
     assert.equal(mockDirector._project.scenes[0].shots.length, 4);
   });
+
+  it('15. computes 3D double-ended uncertainty cones, NEXRAD radar gate checks, GOES GLM/IR diagnostics, and Over/Under ground yield', async () => {
+    const {
+      computeFlightPathUncertaintyCones,
+      computeGoesSatelliteDiagnostics,
+    } = await import('./validation.js');
+    const aresFalls = buildAresFallEvents(1792200000000);
+    const sims = aresFalls.find((f) => f.id === 'ares:sims-corner-wa');
+    const asgardPartner = {
+      id: 'asgard:20260814-074833',
+      source: 'asgard',
+      eventTime: '2026-08-14T07:48:33.000Z',
+      location: { lat: 47.8501, lon: -119.4084, altitude: 45.5 },
+      trajectory: {
+        startLat: 47.4117,
+        startLon: -119.4122,
+        startAltKm: 77.9,
+        endLat: 47.8501,
+        endLon: -119.4084,
+        endAltKm: 45.5,
+        azimuth: 0.4,
+        entryAngle: 33.7,
+        entryVelocity: 14.6,
+      },
+      possibleMatches: [{ id: 'ares:sims-corner-wa', source: 'ARES' }],
+    };
+    sims.possibleMatches = [{ id: 'asgard:20260814-074833', source: 'ASGARD' }];
+
+    const cones = computeFlightPathUncertaintyCones(sims, [sims, asgardPartner]);
+    assert.ok(cones);
+    assert.equal(cones.sourceType, 'asgard');
+    assert.ok(cones.waistRadius1SigmaM < cones.entryRadius1SigmaM);
+    assert.ok(cones.waistRadius1SigmaM < cones.terminusRadius1SigmaM);
+
+    const goes = computeGoesSatelliteDiagnostics(sims, asgardPartner);
+    assert.ok(goes);
+    assert.match(goes.satellite, /GOES-18/);
+    assert.ok(goes.parallaxShiftKm > 15);
+
+    const df = runMultiModelDarkFlight(sims, null, {
+      allEvents: [sims, asgardPartner],
+      nFragments: 32,
+      autoFit: true,
+    });
+    assert.ok(df.validation);
+    assert.ok(df.validation.overUnder);
+    assert.equal(df.validation.overUnder.recoveredFloor.stoneCount, 6);
+    assert.ok(
+      df.validation.overUnder.under1Sigma.totalYieldKg <
+        df.validation.overUnder.consensusMedian.totalYieldKg,
+    );
+    assert.ok(
+      df.validation.overUnder.consensusMedian.totalYieldKg <
+        df.validation.overUnder.over2Sigma.totalYieldKg,
+    );
+    assert.ok(df.validation.radarCheck);
+    assert.equal(df.validation.radarCheck.elapsedSec, 125);
+    assert.ok(df.massSweep[0].underPoint && df.massSweep[0].overPoint);
+  });
 });

@@ -656,9 +656,40 @@ export function createControls({ layerState, services, components, config }) {
                   )
                   .join(' · ');
                 const tuneNote = sf.tuning
-                  ? ` [Auto-Fit: wind ${sf.tuning.windScale}×, shape ${sf.tuning.shapeFactor}, vel ${sf.tuning.speedScale ?? 1}×, az ${sf.tuning.azimuthDeltaDeg >= 0 ? '+' : ''}${sf.tuning.azimuthDeltaDeg}° → RMS ${sf.baselineRmsM}m → ${sf.bestRmsM}m]`
+                  ? ` [Auto-Fit: wind ${sf.tuning.windScale}×, shape ${sf.tuning.shapeFactor}, vel ${sf.tuning.speedScale ?? 1}×, az ${sf.tuning.azimuthDeltaDeg >= 0 ? '+' : ''}${sf.tuning.azimuthDeltaDeg}°${sf.terminusShiftM ? `, terminus Δ=${sf.terminusShiftM}m` : ''} → RMS ${sf.baselineRmsM}m → ${sf.bestRmsM}m]`
                   : ` [RMS ${sf.bestRmsM}m]`;
                 info += `\n◆ Found Stones (${sf.comparisons.length})${tuneNote}: ${stoneSummary}`;
+              }
+              const val = df.validation;
+              if (val) {
+                if (val.pathCones) {
+                  const pc = val.pathCones;
+                  info += `\n📐 3D Flight-Path Uncertainty Cones (${pc.methodLabel}): 1σ Entry ±${(pc.entryRadius1SigmaM / 1000).toFixed(2)} km → Waist ±${(pc.waistRadius1SigmaM / 1000).toFixed(2)} km → Terminus ±${(pc.terminusRadius1SigmaM / 1000).toFixed(2)} km (2σ outer ±${(pc.terminusRadius2SigmaM / 1000).toFixed(2)} km · radiant ±${pc.angularUncertaintyDeg}° · vel ±${pc.velocityUncertaintyPct}%)`;
+                }
+                if (val.overUnder) {
+                  const ou = val.overUnder;
+                  const u1 = ou.under1Sigma;
+                  const cm = ou.consensusMedian;
+                  const o2 = ou.over2Sigma;
+                  const floorNote = ou.recoveredFloor
+                    ? `Recovered Floor: ${ou.recoveredFloor.totalGrams}g (${ou.recoveredFloor.stoneCount} stones, max ${ou.recoveredFloor.maxStoneGrams}g / ${ou.recoveredFloor.maxStoneDiamCm}cm) · `
+                    : '';
+                  info += `\n⚖ Ground Yield & Stone Size Over/Under: ${floorNote}UNDER (1σ): ${u1.totalYieldKg} kg (${u1.totalYieldLb} lb, max stone ~${u1.maxStoneGrams}g / ${u1.maxStoneDiamCm}cm) · CONSENSUS: ${cm.totalYieldKg} kg (${cm.totalYieldLb} lb, max stone ~${cm.maxStoneGrams}g / ${cm.maxStoneDiamCm}cm) · OVER (2σ): ${o2.totalYieldKg} kg (${o2.totalYieldLb} lb, max stone ~${o2.maxStoneGrams}g / ${o2.maxStoneDiamCm}cm)`;
+                }
+                if (val.radarCheck) {
+                  const rc = val.radarCheck;
+                  info += `\n📡 NEXRAD Doppler Radar Gate (${rc.station} · ${rc.gateTimeUtc.slice(11, 19)} UTC @ ${rc.gateAltitudeKm} km · Δt +${rc.elapsedSec}s · ${rc.reflectivityDbz} dBZ): ${rc.verdict}`;
+                }
+                if (val.goesDiag) {
+                  const gd = val.goesDiag;
+                  info += `\n🛰 ${gd.satellite}: GLM 14km-ellipsoid parallax shift ${gd.parallaxShiftKm} km toward ${gd.parallaxBearingDeg}° · ${gd.abiBand7Swir}`;
+                }
+                if (
+                  Array.isArray(val.sanityWarnings) &&
+                  val.sanityWarnings.length > 0
+                ) {
+                  info += `\n🔍 Sanity Checks: ${val.sanityWarnings.join(' | ')}`;
+                }
               }
             }
           }

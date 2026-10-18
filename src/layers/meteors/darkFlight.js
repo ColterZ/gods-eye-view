@@ -23,6 +23,7 @@ import {
   autoFitDarkFlightToFoundStones,
   scaleSoundingWind,
 } from './foundStones.js';
+import { evaluateEventSanityAndOverUnder } from './validation.js';
 
 const R_GAS = 287.058;
 const GAMMA = 1.4;
@@ -658,11 +659,11 @@ export function runMultiModelDarkFlight(
 
   // Check for documented or user-supplied Found Stones for this fall (or corroborated partners)
   const foundStones = getFoundStonesForEvent(event);
-  // NEVER clamp effectiveAltM below terminalAltM: the 3D RK4 integration must
-  // start at the exact 3D terminus altitude of the track (e.g. 45.5 km).
-  const effectiveLat = lat;
-  const effectiveLon = lon;
-  const effectiveAltM = terminalAltM;
+  // Start 3D RK4 integration at the exact 3D terminus altitude of the track
+  // (plus any small fine-tuned offset within the camera's 1σ measurement cone).
+  let effectiveLat = lat;
+  let effectiveLon = lon;
+  let effectiveAltM = terminalAltM;
   let activeSounding = sounding;
   let effectiveSpeedMs = terminalSpeedMs;
   let effectiveAzimuthDeg = azimuthDeg;
@@ -683,6 +684,12 @@ export function runMultiModelDarkFlight(
       });
       if (stoneFit?.tuning) {
         activeSounding = scaleSoundingWind(sounding, stoneFit.tuning.windScale);
+        effectiveLat += Number(stoneFit.tuning.latDeltaDeg) || 0;
+        effectiveLon += Number(stoneFit.tuning.lonDeltaDeg) || 0;
+        effectiveAltM = Math.max(
+          5000,
+          effectiveAltM + (Number(stoneFit.tuning.altDeltaKm) || 0) * 1000,
+        );
         effectiveSpeedMs =
           effectiveSpeedMs * (stoneFit.tuning.speedScale || 1.0);
         effectiveAzimuthDeg =
@@ -703,6 +710,7 @@ export function runMultiModelDarkFlight(
       stoneFit = {
         baselineRmsM: baseEval.rmsErrorM,
         bestRmsM: baseEval.rmsErrorM,
+        terminusShiftM: 0,
         tuning: null,
         comparisons: baseEval.comparisons,
       };
@@ -710,6 +718,12 @@ export function runMultiModelDarkFlight(
   }
 
   // REGIME B: Full 3-Model Strewn Field (Deterministic Spine + Monte Carlo + Cross-Calibration)
+  // Also compute Under (-1σ compact/low-wind) and Over (+1σ tabular/high-wind) boundary rails
+  // for each mass band so the ground view displays explicit Over/Under margins of error.
+  const underSounding = scaleSoundingWind(activeSounding, 0.84);
+  const overSounding = scaleSoundingWind(activeSounding, 1.16);
+  const cosLat = Math.max(0.05, Math.cos(effectiveLat * DEG_TO_RAD));
+
   const massSweep = CANONICAL_MASS_SWEEP.map((band) => {
     const res = integrateFragmentDarkFlight({
       terminalLat: effectiveLat,
@@ -723,7 +737,58 @@ export function runMultiModelDarkFlight(
       sounding: activeSounding,
       recordTrack: true,
     });
-    return res ? { ...res, label: band.label, color: band.color } : null;
+    if (!res) return null;
+
+    const underImp = integrateFragmentDarkFlight({
+      terminalLat: effectiveLat,
+      terminalLon: effectiveLon,
+      terminalAltM: effectiveAltM,
+      terminalSpeedMs: effectiveSpeedMs * 1.1,
+      azimuthDeg: (effectiveAzimuthDeg - 2.2 + 360) % 360,
+      entryAngleDeg: Math.min(88, entryAngleDeg + 1.5),
+      massKg: band.massKg,
+      shapeFactor: Math.max(0.8, effectiveShapeFactor * 0.82),
+      sounding: underSounding,
+      recordTrack: false,
+    });
+
+    const overImp = integrateFragmentDarkFlight({
+      terminalLat: effectiveLat,
+      terminalLon: effectiveLon,
+      terminalAltM: effectiveAltM,
+      terminalSpeedMs: effectiveSpeedMs * 0.9,
+      azimuthDeg: (effectiveAzimuthDeg + 2.2 + 360) % 360,
+      entryAngleDeg: Math.max(8, entryAngleDeg - 1.5),
+      massKg: band.massKg,
+      shapeFactor: effectiveShapeFactor * 1.24,
+      sounding: overSounding,
+      recordTrack: false,
+    });
+
+    let marginRadiusM = 450;
+    if (underImp && overImp) {
+      const dLatM = (overImp.lat - underImp.lat) * METERS_PER_DEG_LAT;
+      const dLonM = (overImp.lon - underImp.lon) * METERS_PER_DEG_LAT * cosLat;
+      marginRadiusM = Math.max(
+        220,
+        Math.round(Math.hypot(dLatM, dLonM) * 0.5),
+      );
+    }
+
+    const estDiameterCm =
+      Math.round(
+        2 * Math.cbrt((3 * ((band.massKg * 1000) / 3.4)) / (4 * Math.PI)) * 10,
+      ) / 10;
+
+    return {
+      ...res,
+      label: band.label,
+      color: band.color,
+      estDiameterCm,
+      underPoint: underImp ? { lat: underImp.lat, lon: underImp.lon } : null,
+      overPoint: overImp ? { lat: overImp.lat, lon: overImp.lon } : null,
+      marginRadiusM,
+    };
   }).filter(Boolean);
 
   const monteCarloImpacts = [];
@@ -802,11 +867,19 @@ export function runMultiModelDarkFlight(
     }
   }
 
-  return {
+  const resultObj = {
     eventId: event.id,
     feasible: true,
     regime: 'full-3d-strewn-field',
     borrowedFromPartner,
+    effectiveTerminus: {
+      lat: Math.round(effectiveLat * 100000) / 100000,
+      lon: Math.round(effectiveLon * 100000) / 100000,
+      altKm: Math.round((effectiveAltM / 1000) * 100) / 100,
+      rawLat: Math.round(lat * 100000) / 100000,
+      rawLon: Math.round(lon * 100000) / 100000,
+      rawAltKm: Math.round((terminalAltM / 1000) * 100) / 100,
+    },
     sounding,
     massSweep,
     monteCarloImpacts,
@@ -821,7 +894,13 @@ export function runMultiModelDarkFlight(
       matchedFallName,
       note: borrowedFromPartner
         ? `Trajectory azimuth borrowed from corroborated partner ${borrowedFromPartner}.`
-        : 'Deterministic 5-mass RK4 spine cross-verified against 160-fragment Monte Carlo ensemble.',
+        : 'Deterministic 7-mass RK4 spine cross-verified against 160-fragment Monte Carlo ensemble.',
     },
   };
+  resultObj.validation = evaluateEventSanityAndOverUnder(
+    event,
+    resultObj,
+    allEvents,
+  );
+  return resultObj;
 }

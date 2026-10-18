@@ -13,7 +13,37 @@ import {
   formatEnergyKt,
   formatLatLon,
 } from './model.js';
+import { computeFlightPathUncertaintyCones } from './validation.js';
 import { isPointerFree } from '../../data/inputOwnership.js';
+
+function buildOrthonormalBasis(axis) {
+  const up =
+    Math.abs(axis.z) < 0.9
+      ? new Cesium.Cartesian3(0, 0, 1)
+      : new Cesium.Cartesian3(1, 0, 0);
+  const u = Cesium.Cartesian3.cross(axis, up, new Cesium.Cartesian3());
+  Cesium.Cartesian3.normalize(u, u);
+  const v = Cesium.Cartesian3.cross(axis, u, new Cesium.Cartesian3());
+  Cesium.Cartesian3.normalize(v, v);
+  return { u, v };
+}
+
+function makeCircleRing3D(center, u, v, radiusM, segments = 16) {
+  const pts = [];
+  for (let i = 0; i <= segments; i++) {
+    const theta = (i / segments) * Math.PI * 2;
+    const cos = Math.cos(theta) * radiusM;
+    const sin = Math.sin(theta) * radiusM;
+    pts.push(
+      new Cesium.Cartesian3(
+        center.x + u.x * cos + v.x * sin,
+        center.y + u.y * cos + v.y * sin,
+        center.z + u.z * cos + v.z * sin,
+      ),
+    );
+  }
+  return pts;
+}
 
 export function createRendering({ layerState, services, components, config }) {
   const overlayHost = config.overlayHost;
@@ -167,13 +197,43 @@ export function createRendering({ layerState, services, components, config }) {
           variant: 'card',
           cardStyle: 'tactical',
           collisionGroup: 'ambient-card',
-          title: `◆ ${comp.stone.label} (${comp.stone.massGrams}g)`,
+          title: `◆ ${comp.stone.label} (${comp.stone.massGrams}g${comp.stone.estDiameterCm ? ` · ~${comp.stone.estDiameterCm}cm` : ''})`,
           details: [`Sim vs Found Δ=${comp.errorM}m (${comp.bearingDeg}°)`],
           accent: '#10b981',
           selected: false,
           protected: true,
           priority: Number.MAX_SAFE_INTEGER - 5,
           gapPx: 14,
+          verticalOnly: true,
+          horizonCull: true,
+          interactive: false,
+        });
+      }
+      const nexrad = df.validation?.nexrad;
+      if (nexrad && Array.isArray(nexrad.polygon) && nexrad.polygon.length > 0) {
+        const cLat =
+          nexrad.polygon.reduce((s, p) => s + p.lat, 0) / nexrad.polygon.length;
+        const cLon =
+          nexrad.polygon.reduce((s, p) => s + p.lon, 0) / nexrad.polygon.length;
+        entries.push({
+          id: `meteor-df:nexrad:${df.eventId}`,
+          position: Cesium.Cartesian3.fromDegrees(
+            cLon,
+            cLat,
+            nexrad.gateAltitudeKm * 1000,
+          ),
+          variant: 'card',
+          cardStyle: 'tactical',
+          collisionGroup: 'ambient-card',
+          title: `📡 NEXRAD GATE ${nexrad.gateTimeUtc.slice(11, 19)} (${nexrad.gateAltitudeKm} km)`,
+          details: [
+            `Δt +${nexrad.elapsedSec}s post-bolide · ${nexrad.reflectivityDbz} dBZ · 10g–100g swarm`,
+          ],
+          accent: '#38bdf8',
+          selected: false,
+          protected: true,
+          priority: Number.MAX_SAFE_INTEGER - 8,
+          gapPx: 12,
           verticalOnly: true,
           horizonCull: true,
           interactive: false,
@@ -294,10 +354,34 @@ export function createRendering({ layerState, services, components, config }) {
       }
     }
 
-    // 2. Render Deterministic 5-Mass Spine & 3D Deceleration Curves (in 'all' or 'sweep' modes)
+    // 2. Render Deterministic 7-Mass Spine, 3D Deceleration Curves & Ground Over/Under Corridor
     if (mode === 'all' || mode === 'sweep') {
+      const spinePositions = [];
+      const underRailPositions = [];
+      const overRailPositions = [];
+
       for (const band of df.massSweep || []) {
         const bandColor = Cesium.Color.fromCssColorString(band.color);
+        spinePositions.push(Cesium.Cartesian3.fromDegrees(band.lon, band.lat, 0));
+        if (band.underPoint) {
+          underRailPositions.push(
+            Cesium.Cartesian3.fromDegrees(
+              band.underPoint.lon,
+              band.underPoint.lat,
+              0,
+            ),
+          );
+        }
+        if (band.overPoint) {
+          overRailPositions.push(
+            Cesium.Cartesian3.fromDegrees(
+              band.overPoint.lon,
+              band.overPoint.lat,
+              0,
+            ),
+          );
+        }
+
         if (Array.isArray(band.track) && band.track.length > 1) {
           const positions = band.track.map((pt) =>
             Cesium.Cartesian3.fromDegrees(pt.lon, pt.lat, pt.altM),
@@ -313,6 +397,46 @@ export function createRendering({ layerState, services, components, config }) {
           });
           layerState._darkFlightEntities.push(trackEnt);
         }
+
+        // Per-mass ground 1σ margin-of-error ring + cross-track error bar
+        if (band.marginRadiusM && band.underPoint && band.overPoint) {
+          const errBarEnt = layerState._dataSource.entities.add({
+            id: `df:${df.eventId}:errbar:${band.label}`,
+            polyline: {
+              positions: Cesium.Cartesian3.fromDegreesArray([
+                band.underPoint.lon,
+                band.underPoint.lat,
+                band.lon,
+                band.lat,
+                band.overPoint.lon,
+                band.overPoint.lat,
+              ]),
+              width: 1.8,
+              material: new Cesium.PolylineDashMaterialProperty({
+                color: bandColor.withAlpha(0.75),
+                dashLength: 8,
+              }),
+              clampToGround: true,
+            },
+          });
+          layerState._darkFlightEntities.push(errBarEnt);
+
+          const marginEnt = layerState._dataSource.entities.add({
+            id: `df:${df.eventId}:margin:${band.label}`,
+            position: Cesium.Cartesian3.fromDegrees(band.lon, band.lat, 0),
+            ellipse: {
+              semiMajorAxis: band.marginRadiusM,
+              semiMinorAxis: Math.max(150, Math.round(band.marginRadiusM * 0.65)),
+              material: bandColor.withAlpha(0.08),
+              outline: true,
+              outlineColor: bandColor.withAlpha(0.55),
+              outlineWidth: 1,
+              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            },
+          });
+          layerState._darkFlightEntities.push(marginEnt);
+        }
+
         const impactEnt = layerState._dataSource.entities.add({
           id: `df:${df.eventId}:mass:${band.label}`,
           position: Cesium.Cartesian3.fromDegrees(band.lon, band.lat, 0),
@@ -326,6 +450,263 @@ export function createRendering({ layerState, services, components, config }) {
           },
         });
         layerState._darkFlightEntities.push(impactEnt);
+      }
+
+      // Central Mass-Sorting Spine + Under (-1σ) / Over (+1σ) Margin Rails on the ground
+      if (spinePositions.length >= 2) {
+        const spineLine = layerState._dataSource.entities.add({
+          id: `df:${df.eventId}:spine-center`,
+          polyline: {
+            positions: spinePositions,
+            width: 2.2,
+            material: Cesium.Color.fromCssColorString('#fde047').withAlpha(0.8),
+            clampToGround: true,
+          },
+        });
+        layerState._darkFlightEntities.push(spineLine);
+      }
+      if (underRailPositions.length >= 2) {
+        const underRail = layerState._dataSource.entities.add({
+          id: `df:${df.eventId}:spine-under`,
+          polyline: {
+            positions: underRailPositions,
+            width: 1.6,
+            material: new Cesium.PolylineDashMaterialProperty({
+              color: Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.7),
+              dashLength: 10,
+            }),
+            clampToGround: true,
+          },
+        });
+        layerState._darkFlightEntities.push(underRail);
+      }
+      if (overRailPositions.length >= 2) {
+        const overRail = layerState._dataSource.entities.add({
+          id: `df:${df.eventId}:spine-over`,
+          polyline: {
+            positions: overRailPositions,
+            width: 1.6,
+            material: new Cesium.PolylineDashMaterialProperty({
+              color: Cesium.Color.fromCssColorString('#fb7185').withAlpha(0.7),
+              dashLength: 10,
+            }),
+            clampToGround: true,
+          },
+        });
+        layerState._darkFlightEntities.push(overRail);
+      }
+    }
+
+    // 2b. Render 3D Double-Ended Cones of Uncertainty (Biconical / Hourglass 3D Error Volume)
+    // around the atmospheric entry trajectory + NEXRAD Doppler Radar Gate polygon
+    const selEvent = layerState._events.find((e) => e.id === df.eventId);
+    const conesSpec =
+      df.validation?.pathCones ||
+      (selEvent
+        ? computeFlightPathUncertaintyCones(selEvent, layerState._events)
+        : null);
+    if (conesSpec) {
+      const trajEvent =
+        layerState._events.find((e) => e.id === conesSpec.sourceId) || selEvent;
+      const trajGeom = trajEvent ? computeEventGeometry(trajEvent, Cesium) : null;
+      if (
+        trajGeom?.entryTrackPositions &&
+        trajGeom.entryTrackPositions.length >= 2
+      ) {
+        const startPos = trajGeom.entryTrackPositions[0];
+        const endPos = trajGeom.entryTrackPositions[1];
+        const axis = Cesium.Cartesian3.subtract(
+          endPos,
+          startPos,
+          new Cesium.Cartesian3(),
+        );
+        const len = Cesium.Cartesian3.magnitude(axis);
+        if (len > 500) {
+          Cesium.Cartesian3.normalize(axis, axis);
+          const { u, v } = buildOrthonormalBasis(axis);
+          const waistPos = new Cesium.Cartesian3(
+            startPos.x * 0.52 + endPos.x * 0.48,
+            startPos.y * 0.52 + endPos.y * 0.48,
+            startPos.z * 0.52 + endPos.z * 0.48,
+          );
+
+          // 1σ Inner Double-Ended Cone (solid cyan-amber rings + 8 biconical ribs)
+          const ringStart1 = makeCircleRing3D(
+            startPos,
+            u,
+            v,
+            conesSpec.entryRadius1SigmaM,
+            16,
+          );
+          const ringWaist1 = makeCircleRing3D(
+            waistPos,
+            u,
+            v,
+            conesSpec.waistRadius1SigmaM,
+            16,
+          );
+          const ringEnd1 = makeCircleRing3D(
+            endPos,
+            u,
+            v,
+            conesSpec.terminusRadius1SigmaM,
+            16,
+          );
+          const cone1Color =
+            Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.75);
+
+          for (const [tag, ringPts] of [
+            ['start1', ringStart1],
+            ['waist1', ringWaist1],
+            ['end1', ringEnd1],
+          ]) {
+            layerState._darkFlightEntities.push(
+              layerState._dataSource.entities.add({
+                id: `df:${df.eventId}:cone:${tag}`,
+                polyline: {
+                  positions: ringPts,
+                  width: 2.0,
+                  material: cone1Color,
+                  arcType: Cesium.ArcType.NONE,
+                },
+              }),
+            );
+          }
+
+          // 2σ Outer Double-Ended Cone (dashed outer margin-of-error envelope)
+          const ringStart2 = makeCircleRing3D(
+            startPos,
+            u,
+            v,
+            conesSpec.entryRadius2SigmaM,
+            16,
+          );
+          const ringWaist2 = makeCircleRing3D(
+            waistPos,
+            u,
+            v,
+            conesSpec.waistRadius2SigmaM,
+            16,
+          );
+          const ringEnd2 = makeCircleRing3D(
+            endPos,
+            u,
+            v,
+            conesSpec.terminusRadius2SigmaM,
+            16,
+          );
+          const cone2Color =
+            Cesium.Color.fromCssColorString('#f59e0b').withAlpha(0.55);
+
+          for (const [tag, ringPts] of [
+            ['start2', ringStart2],
+            ['waist2', ringWaist2],
+            ['end2', ringEnd2],
+          ]) {
+            layerState._darkFlightEntities.push(
+              layerState._dataSource.entities.add({
+                id: `df:${df.eventId}:cone:${tag}`,
+                polyline: {
+                  positions: ringPts,
+                  width: 1.5,
+                  material: new Cesium.PolylineDashMaterialProperty({
+                    color: cone2Color,
+                    dashLength: 10,
+                  }),
+                  arcType: Cesium.ArcType.NONE,
+                },
+              }),
+            );
+          }
+
+          // 8 longitudinal biconical ribs connecting Entry -> Waist -> Terminus
+          for (let k = 0; k < 16; k += 2) {
+            layerState._darkFlightEntities.push(
+              layerState._dataSource.entities.add({
+                id: `df:${df.eventId}:cone:rib1:${k}`,
+                polyline: {
+                  positions: [ringStart1[k], ringWaist1[k], ringEnd1[k]],
+                  width: 1.5,
+                  material: cone1Color,
+                  arcType: Cesium.ArcType.NONE,
+                },
+              }),
+            );
+            layerState._darkFlightEntities.push(
+              layerState._dataSource.entities.add({
+                id: `df:${df.eventId}:cone:rib2:${k}`,
+                polyline: {
+                  positions: [ringStart2[k], ringWaist2[k], ringEnd2[k]],
+                  width: 1.2,
+                  material: new Cesium.PolylineDashMaterialProperty({
+                    color: cone2Color,
+                    dashLength: 12,
+                  }),
+                  arcType: Cesium.ArcType.NONE,
+                },
+              }),
+            );
+          }
+        }
+      }
+    }
+
+    // 2c. Render NOAA NEXRAD Doppler Weather Radar Gate (3D 10.29km slice + Ground Polygon)
+    const nexrad = df.validation?.nexrad;
+    if (nexrad && Array.isArray(nexrad.polygon) && nexrad.polygon.length >= 3) {
+      const radarColor = Cesium.Color.fromCssColorString('#38bdf8');
+      const gateAltM = nexrad.gateAltitudeKm * 1000;
+      const groundLoop = [...nexrad.polygon, nexrad.polygon[0]].map((p) =>
+        Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0),
+      );
+      const airLoop = [...nexrad.polygon, nexrad.polygon[0]].map((p) =>
+        Cesium.Cartesian3.fromDegrees(p.lon, p.lat, gateAltM),
+      );
+
+      // Ground projection of NEXRAD radar gate
+      layerState._darkFlightEntities.push(
+        layerState._dataSource.entities.add({
+          id: `df:${df.eventId}:nexrad:ground-outline`,
+          polyline: {
+            positions: groundLoop,
+            width: 2.5,
+            material: radarColor.withAlpha(0.9),
+            clampToGround: true,
+          },
+        }),
+      );
+      // 3D radar beam slice at gateAltitudeKm (e.g. 10.29 km)
+      layerState._darkFlightEntities.push(
+        layerState._dataSource.entities.add({
+          id: `df:${df.eventId}:nexrad:air-slice`,
+          polyline: {
+            positions: airLoop,
+            width: 2.5,
+            material: radarColor.withAlpha(0.95),
+            arcType: Cesium.ArcType.NONE,
+          },
+        }),
+      );
+      // Vertical corner tethers from 10.29 km radar slice to ground
+      for (let idx = 0; idx < nexrad.polygon.length; idx++) {
+        const p = nexrad.polygon[idx];
+        layerState._darkFlightEntities.push(
+          layerState._dataSource.entities.add({
+            id: `df:${df.eventId}:nexrad:pillar:${idx}`,
+            polyline: {
+              positions: [
+                Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0),
+                Cesium.Cartesian3.fromDegrees(p.lon, p.lat, gateAltM),
+              ],
+              width: 1.2,
+              material: new Cesium.PolylineDashMaterialProperty({
+                color: radarColor.withAlpha(0.55),
+                dashLength: 10,
+              }),
+              arcType: Cesium.ArcType.NONE,
+            },
+          }),
+        );
       }
     }
 

@@ -38,6 +38,7 @@ export { createLifecycle } from './lifecycle.js';
 export * from './corroboration.js';
 export * from './darkFlight.js';
 export * from './foundStones.js';
+export * from './validation.js';
 export * from './sceneGenerator.js';
 export * from './model.js';
 export * from './policy.js';

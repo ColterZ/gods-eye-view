@@ -238,6 +238,8 @@ export function evaluateFoundStoneResiduals({
     ? tuning.shapeFactor
     : 1.15;
   const altDeltaM = (Number(tuning.altDeltaKm) || 0) * 1000;
+  const latDeltaDeg = Number(tuning.latDeltaDeg) || 0;
+  const lonDeltaDeg = Number(tuning.lonDeltaDeg) || 0;
   const azDelta = Number(tuning.azimuthDeltaDeg) || 0;
   const speedScale = Number.isFinite(tuning.speedScale)
     ? tuning.speedScale
@@ -252,8 +254,8 @@ export function evaluateFoundStoneResiduals({
     const massKg = Math.max(0.0005, stone.massGrams / 1000);
     const densityKgM3 = (stone.densityGcm3 || 3.35) * 1000;
     const sim = integrateFragmentDarkFlight({
-      terminalLat,
-      terminalLon,
+      terminalLat: terminalLat + latDeltaDeg,
+      terminalLon: terminalLon + lonDeltaDeg,
       terminalAltM: Math.max(5000, terminalAltM + altDeltaM),
       terminalSpeedMs: terminalSpeedMs * speedScale,
       azimuthDeg: (azimuthDeg + azDelta + 360) % 360,
@@ -275,11 +277,17 @@ export function evaluateFoundStoneResiduals({
     const bearingDeg = Math.round(
       (((Math.atan2(dLonM, dLatM) * 180) / Math.PI) % 360 + 360) % 360,
     );
+    const diamCm =
+      Math.round(
+        2 *
+          Math.cbrt((3 * (stone.massGrams / (stone.densityGcm3 || 3.35))) / (4 * Math.PI)) *
+          10,
+      ) / 10;
 
     sumSq += errorM * errorM;
     sumDist += errorM;
     comparisons.push({
-      stone,
+      stone: { ...stone, estDiameterCm: diamCm },
       simulated: sim,
       errorM,
       bearingDeg,
@@ -326,56 +334,105 @@ export function autoFitDarkFlightToFoundStones({
     windScale: 1.0,
     shapeFactor: 1.15,
     altDeltaKm: 0,
+    latDeltaDeg: 0,
+    lonDeltaDeg: 0,
     azimuthDeltaDeg: 0,
+    speedScale: 1.0,
   };
   let bestEval = baseline;
 
-  const windScales = [0.7, 1.0, 1.4];
-  const shapeFactors = [0.9, 1.15, 1.45];
-  const altDeltas = [0]; // Keep 3D start anchored at exact camera/sensor terminus altitude
+  // Stage 1: Coarse joint search over windScale, shapeFactor, azimuthDeltaDeg, speedScale
+  const windScales = [0.7, 0.85, 1.0, 1.2, 1.4];
+  const shapeFactors = [0.9, 1.15, 1.4];
   const azDeltas = [-8, -4, 0, 4, 8];
   const speedScales = [0.35, 0.55, 0.8, 1.0, 1.25];
 
   for (const windScale of windScales) {
     for (const shapeFactor of shapeFactors) {
-      for (const altDeltaKm of altDeltas) {
-        for (const azimuthDeltaDeg of azDeltas) {
-          for (const speedScale of speedScales) {
-            const tuning = {
-              windScale,
-              shapeFactor,
-              altDeltaKm,
-              azimuthDeltaDeg,
-              speedScale,
-            };
-            const res = evaluateFoundStoneResiduals({
-              stones,
-              terminalLat,
-              terminalLon,
-              terminalAltM,
-              terminalSpeedMs,
-              azimuthDeg,
-              entryAngleDeg,
-              sounding,
-              tuning,
-            });
-            if (
-              res.rmsErrorM !== null &&
-              (bestEval.rmsErrorM === null ||
-                res.rmsErrorM < bestEval.rmsErrorM)
-            ) {
-              bestEval = res;
-              bestTuning = tuning;
-            }
+      for (const azimuthDeltaDeg of azDeltas) {
+        for (const speedScale of speedScales) {
+          const tuning = {
+            windScale,
+            shapeFactor,
+            altDeltaKm: 0,
+            latDeltaDeg: 0,
+            lonDeltaDeg: 0,
+            azimuthDeltaDeg,
+            speedScale,
+          };
+          const res = evaluateFoundStoneResiduals({
+            stones,
+            terminalLat,
+            terminalLon,
+            terminalAltM,
+            terminalSpeedMs,
+            azimuthDeg,
+            entryAngleDeg,
+            sounding,
+            tuning,
+          });
+          if (
+            res.rmsErrorM !== null &&
+            (bestEval.rmsErrorM === null || res.rmsErrorM < bestEval.rmsErrorM)
+          ) {
+            bestEval = res;
+            bestTuning = tuning;
           }
         }
       }
     }
   }
 
+  // Stage 2: Fine-tune terminus release point (latDeltaDeg, lonDeltaDeg, altDeltaKm)
+  // within the camera triangulation 1σ uncertainty cone (±1.1 km horiz, ±1.2 km vert)
+  const latOffsets = [-0.006, -0.003, 0, 0.003, 0.006];
+  const lonOffsets = [-0.008, -0.004, 0, 0.004, 0.008];
+  const altOffsets = [-1.0, 0, 1.0];
+  const baseBest = { ...bestTuning };
+
+  for (const latDeltaDeg of latOffsets) {
+    for (const lonDeltaDeg of lonOffsets) {
+      for (const altDeltaKm of altOffsets) {
+        const tuning = {
+          ...baseBest,
+          latDeltaDeg,
+          lonDeltaDeg,
+          altDeltaKm,
+        };
+        const res = evaluateFoundStoneResiduals({
+          stones,
+          terminalLat,
+          terminalLon,
+          terminalAltM,
+          terminalSpeedMs,
+          azimuthDeg,
+          entryAngleDeg,
+          sounding,
+          tuning,
+        });
+        if (
+          res.rmsErrorM !== null &&
+          (bestEval.rmsErrorM === null || res.rmsErrorM < bestEval.rmsErrorM)
+        ) {
+          bestEval = res;
+          bestTuning = tuning;
+        }
+      }
+    }
+  }
+
+  const cosLat = Math.max(0.05, Math.cos(terminalLat * DEG_TO_RAD));
+  const terminusShiftM = Math.round(
+    Math.hypot(
+      bestTuning.latDeltaDeg * METERS_PER_DEG_LAT,
+      bestTuning.lonDeltaDeg * METERS_PER_DEG_LAT * cosLat,
+    ),
+  );
+
   return {
     baselineRmsM: baseline.rmsErrorM,
     bestRmsM: bestEval.rmsErrorM,
+    terminusShiftM,
     tuning: bestTuning,
     comparisons: bestEval.comparisons,
   };
