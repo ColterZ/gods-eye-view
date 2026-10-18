@@ -383,39 +383,44 @@ export function autoFitDarkFlightToFoundStones({
     }
   }
 
-  // Stage 2: Fine-tune terminus release point (latDeltaDeg, lonDeltaDeg, altDeltaKm)
-  // within the camera triangulation 2σ terminus uncertainty cone (±2.0 km N/S, ±2.4 km E/W)
-  const latOffsets = [-0.016, -0.01, -0.005, 0, 0.005, 0.01, 0.016];
-  const lonOffsets = [-0.024, -0.012, 0, 0.012, 0.02, 0.028, 0.034];
-  const altOffsets = [-1.0, 0, 1.0];
+  // Stage 2: Fine-tune terminus release point (latDeltaDeg, lonDeltaDeg) jointly with
+  // speedScale & windScale within the camera 2σ terminus uncertainty cone (±2.0 km N/S, ±2.5 km E/W)
+  const latOffsets = [-0.015, -0.008, -0.003, 0, 0.004, 0.009];
+  const lonOffsets = [0, 0.014, 0.024, 0.032, 0.038];
+  const stage2Speeds = [0.65, 0.95, 1.25, 1.55];
+  const stage2Winds = [0.55, 0.8, 1.05];
   const baseBest = { ...bestTuning };
 
   for (const latDeltaDeg of latOffsets) {
     for (const lonDeltaDeg of lonOffsets) {
-      for (const altDeltaKm of altOffsets) {
-        const tuning = {
-          ...baseBest,
-          latDeltaDeg,
-          lonDeltaDeg,
-          altDeltaKm,
-        };
-        const res = evaluateFoundStoneResiduals({
-          stones,
-          terminalLat,
-          terminalLon,
-          terminalAltM,
-          terminalSpeedMs,
-          azimuthDeg,
-          entryAngleDeg,
-          sounding,
-          tuning,
-        });
-        if (
-          res.rmsErrorM !== null &&
-          (bestEval.rmsErrorM === null || res.rmsErrorM < bestEval.rmsErrorM)
-        ) {
-          bestEval = res;
-          bestTuning = tuning;
+      for (const speedScale of stage2Speeds) {
+        for (const windScale of stage2Winds) {
+          const tuning = {
+            ...baseBest,
+            windScale,
+            speedScale,
+            latDeltaDeg,
+            lonDeltaDeg,
+            altDeltaKm: 0,
+          };
+          const res = evaluateFoundStoneResiduals({
+            stones,
+            terminalLat,
+            terminalLon,
+            terminalAltM,
+            terminalSpeedMs,
+            azimuthDeg,
+            entryAngleDeg,
+            sounding,
+            tuning,
+          });
+          if (
+            res.rmsErrorM !== null &&
+            (bestEval.rmsErrorM === null || res.rmsErrorM < bestEval.rmsErrorM)
+          ) {
+            bestEval = res;
+            bestTuning = tuning;
+          }
         }
       }
     }
