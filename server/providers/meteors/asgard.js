@@ -19,6 +19,28 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     date: '2026-08-14',
     description:
       'Low-mass meteorite fall along WA-17 near Sims Corner & Malone Ranch (07:50:41 UTC radar gate at 10.29 km; largest pieces ~46.6g–80g recovered by Anton & Roberto).',
+    /**
+     * Survival estimate (reference: pasted_content_2026-10-18_22-30-00 reference document)
+     * Entry mass: NASA 170 lb (77.1 kg), entry speed 14.6 km/s, energy 10 t TNT.
+     * Two-stage breakup: Flare 1 ~61.5 km -> micro-pulverization; Flare 2 catastrophic
+     * disruption at 45.5 km. Between 92.5–98.8% destroyed, 1.2–7.5% survived.
+     * Consensus median 3.2% survival -> 28 lb (12.6 kg) on the ground.
+     * 214 g recovered across 6 stones is consistent with this range.
+     */
+    survivalEstimate: {
+      entryMassKg: 34.9,
+      entryMassLb: 77.1,
+      entrySpeedKmS: 14.6,
+      energyTntTons: 10,
+      destructionRangePct: [92.5, 98.8],
+      survivalRangePct: [1.2, 7.5],
+      survivalConsensusPct: 3.2,
+      survivalConsensusLb: 28,
+      survivalConsensusKg: 12.6,
+      recoveredLb: 0.47,
+      recoveredKg: 0.214,
+      regime: 'full-3d-strewn-field',
+    },
   },
   {
     id: 'ares:cockburn-island-on',
