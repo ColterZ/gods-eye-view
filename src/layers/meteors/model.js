@@ -405,6 +405,7 @@ export function buildMeteorCardModel(event, selected = false) {
         );
       }
       if (matchLine) details.push(matchLine);
+      details.push('NASA MSFC ASGARD Network · Report ≠ meteorite fall');
       return {
         title: `☄ ASGARD 3D CAMERA SKYFALL · ${utcStr}`,
         details,
@@ -492,7 +493,7 @@ export function buildMeteorCardModel(event, selected = false) {
     }
     if (matchLine) details.push(matchLine);
     details.push(
-      'NASA/JPL CNEOS US Gov Sensor Sphere (single-point peak fix · rough directionality)',
+      'NASA/JPL CNEOS US Gov Sensor Sphere (single-point fix · rough dir · Report ≠ meteorite fall)',
     );
     return {
       title: `☄ FIREBALL (CNEOS SPHERE) · ${impactStr} TNT · ${utcStr}`,
