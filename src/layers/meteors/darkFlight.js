@@ -242,7 +242,7 @@ export function integrateFragmentDarkFlight({
   const state = {
     lat: terminalLat * DEG_TO_RAD,
     lon: terminalLon * DEG_TO_RAD,
-    alt: Math.max(100, Math.min(42000, terminalAltM)),
+    alt: Math.max(100, Math.min(75000, terminalAltM)),
     vx: vHoriz * Math.sin(azRad),
     vy: vHoriz * Math.cos(azRad),
     vz: -startSpeed * Math.sin(elevRad),
@@ -302,7 +302,7 @@ export function integrateFragmentDarkFlight({
   }
 
   const dt = 0.5;
-  const maxSteps = 2400; // up to 20 minutes free fall
+  const maxSteps = 3600; // up to 30 minutes free fall from upper mesosphere/stratosphere
   let timeSec = 0;
 
   for (let step = 0; step < maxSteps; step++) {
@@ -354,7 +354,7 @@ export function integrateFragmentDarkFlight({
       return null;
     }
 
-    if (track && (step % 8 === 0 || state.alt <= 0)) {
+    if (track && (step <= 30 || step % 4 === 0 || state.alt <= 0)) {
       track.push({
         lat: state.lat * RAD_TO_DEG,
         lon: state.lon * RAD_TO_DEG,
@@ -505,34 +505,64 @@ export function runMultiModelDarkFlight(
     };
   }
 
-  const lat = Number(event.location.lat);
-  const lon = Number(event.location.lon);
-  // Dark-flight transition occurs near 24–32 km (or event's reported end altitude if lower)
-  const rawAltKm = Number(event.location.altitude);
-  const terminalAltM =
-    Number.isFinite(rawAltKm) && rawAltKm > 0
-      ? Math.min(32000, Math.max(14000, rawAltKm * 1000))
-      : 26000;
-  const terminalSpeedMs = 2400;
+  const t = event?.trajectory || {};
+  let lat = Number.isFinite(t.endLat)
+    ? Number(t.endLat)
+    : Number(event.location.lat);
+  let lon = Number.isFinite(t.endLon)
+    ? Number(t.endLon)
+    : Number(event.location.lon);
+  // Start dark-flight integration at the exact 3D terminus altitude of the event
+  // so the mass-sweep curves connect seamlessly to the tip of the ASGARD/GMN/CNEOS vector.
+  let rawAltKm = Number.isFinite(t.endAltKm)
+    ? Number(t.endAltKm)
+    : Number(event.location.altitude);
 
-  // Check if a corroborated partner has an azimuth when the primary event lacks one
+  // Check if a corroborated partner has a 3D camera trajectory when the primary event
+  // lacks an azimuth or is a ground-clamped ARES fall (altitude === 0).
   let azimuthDeg = event?.trajectory?.azimuth;
   let entryAngleDeg = event?.trajectory?.entryAngle ?? 42;
   let borrowedFromPartner = null;
 
-  if (!Number.isFinite(azimuthDeg) && Array.isArray(event?.possibleMatches)) {
-    for (const m of event.possibleMatches) {
-      const partner = allEvents.find((e) => e.id === m.id);
-      if (Number.isFinite(partner?.trajectory?.azimuth)) {
-        azimuthDeg = partner.trajectory.azimuth;
-        if (Number.isFinite(partner?.trajectory?.entryAngle)) {
-          entryAngleDeg = partner.trajectory.entryAngle;
-        }
-        borrowedFromPartner = partner.id;
-        break;
+  if (
+    (!Number.isFinite(azimuthDeg) || !(rawAltKm > 0)) &&
+    Array.isArray(event?.possibleMatches)
+  ) {
+    // Prefer an ASGARD or GMN camera partner for 3D terminus geometry, then CNEOS
+    const partners = event.possibleMatches
+      .map((m) => allEvents.find((e) => e.id === m.id))
+      .filter((p) => Number.isFinite(p?.trajectory?.azimuth))
+      .sort((a, b) => {
+        const rank = (s) => (s === 'asgard' || s === 'gmn' ? 0 : 1);
+        return rank(a.source) - rank(b.source);
+      });
+    const partner = partners[0];
+    if (partner) {
+      azimuthDeg = partner.trajectory.azimuth;
+      if (Number.isFinite(partner.trajectory.entryAngle)) {
+        entryAngleDeg = partner.trajectory.entryAngle;
       }
+      if (!(rawAltKm > 0)) {
+        const pt = partner.trajectory || {};
+        lat = Number.isFinite(pt.endLat)
+          ? Number(pt.endLat)
+          : Number(partner.location.lat);
+        lon = Number.isFinite(pt.endLon)
+          ? Number(pt.endLon)
+          : Number(partner.location.lon);
+        rawAltKm = Number.isFinite(pt.endAltKm)
+          ? Number(pt.endAltKm)
+          : Number(partner.location.altitude);
+      }
+      borrowedFromPartner = partner.id;
     }
   }
+
+  const terminalAltM =
+    Number.isFinite(rawAltKm) && rawAltKm > 0
+      ? Math.min(70000, Math.max(2000, rawAltKm * 1000))
+      : 26000;
+  const terminalSpeedMs = 2400;
 
   const windHeadingDeg = sounding?.summary?.meanDriftHeadingToDeg ?? 90;
 

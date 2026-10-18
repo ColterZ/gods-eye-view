@@ -273,6 +273,20 @@ export function parseAsgardSkyfallMapHtml(html, now = Date.now()) {
 
     const groundTrackDistance = haversineKm(startLat, startLon, endLat, endLon);
     const azimuth = computeCompassAzimuth(startLat, startLon, endLat, endLon);
+    const defaultStartAltKm = 85;
+    const defaultEndAltKm = 48;
+    const defaultEntryAngle =
+      groundTrackDistance > 0
+        ? Math.round(
+            ((Math.atan2(
+              defaultStartAltKm - defaultEndAltKm,
+              groundTrackDistance,
+            ) *
+              180) /
+              Math.PI) *
+              10,
+          ) / 10
+        : 38;
 
     eventsById.set(eventId, {
       id: `asgard:${eventId}`,
@@ -303,7 +317,7 @@ export function parseAsgardSkyfallMapHtml(html, now = Date.now()) {
         vz: null,
         azimuth,
         radiantAzimuth: (azimuth + 180) % 360,
-        entryAngle: null,
+        entryAngle: defaultEntryAngle,
         groundTrackDistance,
       },
       energy: {
