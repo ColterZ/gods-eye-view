@@ -182,7 +182,7 @@ export function createApplicationCatalog({
           id: 'meteors',
           name: 'Fireballs',
           icon: '☄',
-          source: 'NASA/JPL CNEOS',
+          source: 'CNEOS · GMN · NASA ASGARD/ARES',
           feed: sources.cneos,
         }),
       ],

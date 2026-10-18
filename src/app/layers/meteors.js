@@ -20,7 +20,7 @@ export function createApplicationMeteors({ surface, ...options }) {
   return createLayer({
     ...options,
     icon: options.icon ?? '☄',
-    source: options.source ?? 'NASA/JPL CNEOS',
+    source: options.source ?? 'CNEOS · GMN · NASA ASGARD/ARES',
     feed: options.feed,
     services: { ...meteorsServices, anchors: surface.anchors },
     overlayHost: options.overlayHost ?? {

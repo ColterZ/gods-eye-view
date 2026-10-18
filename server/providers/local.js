@@ -28,6 +28,8 @@ import { gnssIntegrityProxy } from './gnssIntegrity.js';
 import { cycloneProxy } from './cyclones.js';
 import { windProxy } from './wind.js';
 import { cneosProxy } from './meteors/cneos.js';
+import { gmnProxy } from './meteors/gmn.js';
+import { asgardProxy } from './meteors/asgard.js';
 
 /**
  * Construct the local provider plugins in their established order.
@@ -64,6 +66,8 @@ function localProviderPlugins({ realtime } = {}) {
     firePerimetersProxy(),
     gnssIntegrityProxy(),
     cneosProxy(),
+    gmnProxy(),
+    asgardProxy(),
     keySetupEndpoint(),
   ];
 }

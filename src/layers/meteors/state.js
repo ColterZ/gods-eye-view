@@ -1,4 +1,4 @@
-import { DEFAULT_TIME_WINDOW } from './policy.js';
+import { DEFAULT_TIME_WINDOW, DEFAULT_SOURCE_FILTER } from './policy.js';
 
 export function createMeteorsState({ services, config }) {
   const layerState = {};
@@ -16,6 +16,7 @@ export function createMeteorsState({ services, config }) {
   layerState._events = [];
   layerState._filteredEvents = [];
   layerState._timeWindow = DEFAULT_TIME_WINDOW;
+  layerState._sourceFilter = DEFAULT_SOURCE_FILTER;
   layerState._selectedEventId = null;
   layerState._selectionIntent = 'auto';
   layerState._lastUpdate = null;

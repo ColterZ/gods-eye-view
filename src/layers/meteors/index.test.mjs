@@ -5,6 +5,19 @@ import {
   computeLocalTrajectoryAngles,
 } from '../../../server/providers/meteors/cneos.js';
 import {
+  parseGmnTrajectorySummary,
+  classifyTisserandOrbit,
+} from '../../../server/providers/meteors/gmn.js';
+import {
+  parseAsgardSkyfallMapHtml,
+  enrichAsgardEventFromDetailHtml,
+  buildAresFallEvents,
+} from '../../../server/providers/meteors/asgard.js';
+import {
+  corroborateMeteorEvents,
+  formatShowerLabel,
+} from './corroboration.js';
+import {
   filterEventsByWindow,
   severityTier,
   buildMeteorCardModel,
@@ -515,5 +528,149 @@ describe('createMeteorsLayer lifecycle & controls', () => {
     h.layer.disable();
     assert.equal(h.overlayState.visible, false);
     assert.equal(h.overlayState.entries.length, 0);
+  });
+});
+
+describe('Stage 2: GMN, NASA ASGARD, ARES Falls & Cross-Source Corroboration', () => {
+  it('(7) parseGmnTrajectorySummary parses 86-col GMN data, classifies TisserandJ orbit, and preserves CC BY 4.0 attribution', () => {
+    const row = Array(86).fill('0');
+    row[0] = '20261016090346_bfK1u';
+    row[2] = '2026-10-16 09:03:46.474813';
+    row[3] = '8';
+    row[4] = 'ORI';
+    row[7] = '95.2';
+    row[9] = '15.8';
+    row[15] = '66.4';
+    row[21] = '41.2';
+    row[23] = '15.1';
+    row[25] = '0.96';
+    row[27] = '163.9';
+    row[37] = '0.57';
+    row[49] = '-0.62'; // Halley-type comet (T_J <= 2)
+    row[55] = '135.0';
+    row[57] = '42.3';
+    row[59] = '67.5';
+    row[61] = '65.8';
+    row[63] = '34.9773';
+    row[65] = '-112.9604';
+    row[67] = '123.9';
+    row[69] = '34.9621';
+    row[71] = '-113.5536';
+    row[73] = '81.9';
+    row[75] = '0.88';
+    row[76] = '-6.57';
+    row[77] = '94.2';
+    row[79] = '0.0087';
+    row[80] = '34.2';
+    row[81] = '28.5';
+    row[84] = '4';
+    row[85] = 'US0001,US0002,US0003,US0004';
+
+    const sampleText = [
+      '# Summary generated on 2026-10-17 14:37:42.488792+00:00 UTC',
+      '# header 1',
+      row.join('; '),
+    ].join('\n');
+
+    const parsed = parseGmnTrajectorySummary(sampleText, {
+      now: 1792200000000,
+    });
+    assert.equal(parsed.events.length, 1);
+    assert.equal(parsed.publicationTime, '2026-10-17T14:37:42.488Z');
+    const ev = parsed.events[0];
+    assert.equal(ev.id, 'gmn:20261016090346_bfK1u');
+    assert.equal(ev.source, 'gmn');
+    assert.equal(ev.magnitude, -6.57);
+    assert.equal(ev.mass, 0.0087);
+    assert.equal(ev.orbit.showerCode, 'ORI');
+    assert.match(ev.orbit.orbitalClass, /Halley-Type/);
+    assert.equal(ev.trajectory.startAltKm, 123.9);
+    assert.equal(ev.trajectory.endAltKm, 81.9);
+    assert.equal(ev.stations.count, 4);
+    assert.match(ev.attribution.license, /CC BY 4\.0/);
+
+    assert.match(classifyTisserandOrbit(3.4), /Asteroidal/);
+    assert.match(classifyTisserandOrbit(2.5), /Jupiter-Family/);
+    assert.equal(formatShowerLabel('ORI'), 'Orionids (ORI)');
+  });
+
+  it('(8) parseAsgardSkyfallMapHtml + enrichAsgardEventFromDetailHtml parse camera trajectories and Chicken Little solver fields', () => {
+    const mapHtml = `
+      var poly_line_abc = L.polyline([[46.265, -117.669], [46.691, -116.643]], {});
+      <a href="https://fireballs.ndc.nasa.gov/skyfalls/events/20261015-015610">20261015-015610</a>
+    `;
+    const events = parseAsgardSkyfallMapHtml(mapHtml, 1792200000000);
+    assert.equal(events.length, 1);
+    const ev = events[0];
+    assert.equal(ev.id, 'asgard:20261015-015610');
+    assert.equal(ev.trajectory.startLat, 46.265);
+    assert.equal(ev.trajectory.endLon, -116.643);
+
+    const detailHtml = `
+      <div>Event Data</div>
+      <div>Chicken Little Altitude</div>
+      <div>79.3 km → 47.3 km (49.3 miles → 29.4 miles)</div>
+      <div>Chicken Little Speed</div>
+      <div>16.2 km/s (36,200 mph)</div>
+    `;
+    enrichAsgardEventFromDetailHtml(ev, detailHtml);
+    assert.equal(ev.trajectory.startAltKm, 79.3);
+    assert.equal(ev.trajectory.endAltKm, 47.3);
+    assert.equal(ev.trajectory.entryVelocity, 16.2);
+    assert.ok(Number.isFinite(ev.trajectory.entryAngle));
+  });
+
+  it('(9) corroborateMeteorEvents flags cross-source matches without silent merging and supports sourceFilter chips', () => {
+    const cneosEv = {
+      id: 'cneos:2026-08-14 08:10:00',
+      source: 'cneos',
+      eventTime: '2026-08-14T08:10:00.000Z',
+      location: { lat: 47.05, lon: -119.3, altitude: 32 },
+      energy: { impact: 0.45, radiated: 12 },
+      trajectory: { entryVelocity: 15.2 },
+    };
+    const gmnEv = {
+      id: 'gmn:20260814081002_xyz',
+      source: 'gmn',
+      eventTime: '2026-08-14T08:10:02.000Z',
+      location: { lat: 47.04, lon: -119.34, altitude: 31.5 },
+      magnitude: -5.8,
+      mass: 0.015,
+      orbit: { showerCode: 'PER', orbitalClass: 'Halley-Type' },
+      trajectory: {
+        startLat: 47.3,
+        startLon: -119.0,
+        startAltKm: 110,
+        endLat: 47.04,
+        endLon: -119.34,
+        endAltKm: 31.5,
+        entryVelocity: 59.1,
+      },
+    };
+    const aresFalls = buildAresFallEvents(1792200000000);
+    const simsCorner = aresFalls.find((f) => f.id === 'ares:sims-corner-wa');
+    assert.ok(simsCorner);
+
+    const combined = corroborateMeteorEvents([cneosEv, gmnEv, simsCorner]);
+    assert.equal(combined.length, 3);
+    // All 3 records remain separate (no silent merge) and cross-reference each other
+    assert.equal(cneosEv.possibleMatches.length, 2);
+    assert.equal(gmnEv.possibleMatches.length, 2);
+    assert.equal(simsCorner.possibleMatches.length, 2);
+
+    // Source filtering works for 'gmn', 'ares', and 'matched'
+    const refMs = Date.parse('2026-10-17T00:00:00Z');
+    assert.equal(
+      filterEventsByWindow(combined, '1y', refMs, 'gmn').length,
+      1,
+    );
+    assert.equal(
+      filterEventsByWindow(combined, '1y', refMs, 'ares').length,
+      1,
+    );
+    assert.equal(
+      filterEventsByWindow(combined, '1y', refMs, 'matched').length,
+      3,
+    );
   });
 });

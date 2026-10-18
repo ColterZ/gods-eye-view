@@ -28,6 +28,13 @@
   - Row controls with `30D`, `90D`, `1Y`, `5Y` filter chips, `FOCUS` / `CNEOS ↗` / `CLEAR` action chips, live-counted severity & vector legend, multi-line telemetry readout (explicitly labeled delayed catalog, never live, and disclaiming meteorite fall inference), and an interactive 25-item event roster list with camera fly-to.
 - Added unit tests in `src/layers/meteors/index.test.mjs` (6 suites/tests passing).
 
+## 2026-10-17 — Stage 2 Multi-Source Fusion & Corroboration Completed
+- Live endpoint discovery revealed `explore.globalmeteornetwork.org/gmn_rest_api` was returning HTTP 503, while GMN's official trajectory summary feed (`https://globalmeteornetwork.org/data/traj_summary_data/daily/traj_summary_latest_daily.txt` and `traj_summary_yesterday.txt`) is live, fast, and updated every 6 hours with 5,088 86-column optical trajectories.
+- Created `server/providers/meteors/gmn.js` (`/api/gmn-meteors`): parses 86-column GMN trajectory summaries, extracts publication timestamp from file header, classifies parent body dynamical origin via Tisserand's parameter with respect to Jupiter ($T_J$), preserves 3D start/end coordinates, radiant, orbital elements, photometric mass ($\tau=0.7\%$), and station codes, with full CC BY 4.0 + Vida et al. (2020, 2021) attribution.
+- Created `server/providers/meteors/asgard.js` (`/api/nasa-skyfalls`): parses all 210 camera-triangulated trajectories from NASA MSFC ASGARD's `skyfallmap` in a single request, enriches recent events from detail pages (supporting both `NASA Camera` and `Chicken Little` solver labels), and serves 18 curated NASA ARES radar-confirmed meteorite falls.
+- Created `src/layers/meteors/corroboration.js`: non-destructive spatiotemporal matcher across `CNEOS`, `GMN`, `ASGARD`, and `ARES` (discovered 23 real cross-source corroborated events in the live 5Y window, including the 3-way Sims Corner WA match across ARES + CNEOS + ASGARD).
+- Upgraded `src/layers/meteors/` with source filter chips (`ALL`, `CNEOS`, `GMN`, `ASGARD`, `FALLS`, `★ MATCHED`), `MATCH (...)` partner jump chip, external links (`GMN CAMERAS ↗`, `GMN FLUX ↗`, `AMS VIEWER ↗`), and 3D measured start-to-end trajectory arrows.
+
 ### Open Questions
 - How to handle CNEOS location uncertainty? (alt is often null)
 - Should we show all CNEOS events or filter by energy threshold?

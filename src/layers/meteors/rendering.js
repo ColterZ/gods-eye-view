@@ -135,16 +135,23 @@ export function createRendering({ layerState, services, components, config }) {
     if (!geom) return;
 
     const isSelected = id === layerState._selectedEventId;
+    const isCorroborated =
+      Array.isArray(event.possibleMatches) && event.possibleMatches.length > 0;
     const { colorHex, pixelSize, selectedSize } = severityTier(event);
     const pointColor = Cesium.Color.fromCssColorString(
       isSelected ? SEVERITY_COLORS.selected : colorHex,
     );
+    const outlineColor = isSelected
+      ? Cesium.Color.BLACK
+      : isCorroborated
+        ? Cesium.Color.fromCssColorString(SEVERITY_COLORS.corroborated)
+        : Cesium.Color.BLACK;
     const size = isSelected ? selectedSize : pixelSize;
 
     const horizon = { points: [], shapes: [], sphere: null };
     const extent = [geom.burstPosition, geom.groundPosition];
 
-    // 1. Primary airburst point at peak-brightness altitude
+    // 1. Primary airburst/terminus point
     const burstEntity = layerState._dataSource.entities.add({
       id,
       name: `Fireball ${event.eventTime?.slice(0, 10) || id}`,
@@ -152,8 +159,8 @@ export function createRendering({ layerState, services, components, config }) {
       point: {
         pixelSize: size,
         color: pointColor,
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: isSelected ? 2.5 : 1.5,
+        outlineColor,
+        outlineWidth: isSelected ? 2.5 : isCorroborated ? 2.5 : 1.5,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
       properties: {
@@ -206,13 +213,19 @@ export function createRendering({ layerState, services, components, config }) {
       layerState._pickEventIdByEntityId.set(tetherId, id);
     }
 
-    // 3. 3D Atmospheric Entry Vector Arrow when ECEF (vx, vy, vz) are available
+    // 3. 3D Atmospheric Entry Trajectory Arrow (CNEOS vector, GMN optical, or ASGARD camera)
     let vectorEntity = null;
     if (geom.entryTrackPositions) {
       extent.push(...geom.entryTrackPositions);
       const vectorId = `${id}:vector`;
+      const baseVecHex =
+        event.source === 'gmn'
+          ? SEVERITY_COLORS.gmn
+          : event.source === 'asgard'
+            ? SEVERITY_COLORS.asgard
+            : SEVERITY_COLORS.vector;
       const vecColor = Cesium.Color.fromCssColorString(
-        isSelected ? SEVERITY_COLORS.selected : SEVERITY_COLORS.vector,
+        isSelected ? SEVERITY_COLORS.selected : baseVecHex,
       ).withAlpha(isSelected ? 0.98 : 0.85);
       vectorEntity = layerState._dataSource.entities.add({
         id: vectorId,
@@ -279,8 +292,14 @@ export function createRendering({ layerState, services, components, config }) {
       entity.point.outlineWidth = isSelected ? 2.5 : 1.5;
       entity.gevLabelModel = buildMeteorCardModel(event, isSelected);
       if (vectorEntity?.polyline) {
+        const baseVecHex =
+          event.source === 'gmn'
+            ? SEVERITY_COLORS.gmn
+            : event.source === 'asgard'
+              ? SEVERITY_COLORS.asgard
+              : SEVERITY_COLORS.vector;
         const vecColor = Cesium.Color.fromCssColorString(
-          isSelected ? SEVERITY_COLORS.selected : SEVERITY_COLORS.vector,
+          isSelected ? SEVERITY_COLORS.selected : baseVecHex,
         ).withAlpha(isSelected ? 0.98 : 0.85);
         vectorEntity.polyline.width = isSelected ? 6 : 4;
         vectorEntity.polyline.material =

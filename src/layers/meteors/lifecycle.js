@@ -139,6 +139,7 @@ export function createLifecycle({ layerState, services, components, config }) {
           layerState._events,
           layerState._timeWindow,
           refMs,
+          layerState._sourceFilter,
         );
 
         // Auto-select the most recent fireball unless the user explicitly cleared selection
