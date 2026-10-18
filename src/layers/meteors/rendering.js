@@ -156,7 +156,7 @@ export function createRendering({ layerState, services, components, config }) {
         }
       }
       const stoneComparisons = df.stoneFit?.comparisons || [];
-      for (const comp of stoneComparisons.slice(0, 4)) {
+      for (const comp of stoneComparisons.slice(0, 6)) {
         entries.push({
           id: `meteor-df:stone:${comp.stone.id}`,
           position: Cesium.Cartesian3.fromDegrees(

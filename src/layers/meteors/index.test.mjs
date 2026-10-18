@@ -818,13 +818,13 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     };
 
     const stones = getFoundStonesForEvent(simsEvent);
-    assert.equal(stones.length, 4);
+    assert.equal(stones.length, 6);
 
     const baselineDf = runMultiModelDarkFlight(simsEvent, sampleSounding, {
       nFragments: 40,
       autoFit: false,
     });
-    assert.equal(baselineDf.stoneFit.comparisons.length, 4);
+    assert.equal(baselineDf.stoneFit.comparisons.length, 6);
     assert.ok(Number.isFinite(baselineDf.stoneFit.baselineRmsM));
 
     const fittedDf = runMultiModelDarkFlight(simsEvent, sampleSounding, {
