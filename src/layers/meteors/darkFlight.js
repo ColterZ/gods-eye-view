@@ -233,9 +233,6 @@ export function integrateFragmentDarkFlight({
   terminalLat,
   terminalLon,
   terminalAltM,
-  anchorLat = null,
-  anchorLon = null,
-  anchorAltM = null,
   terminalSpeedMs,
   azimuthDeg,
   entryAngleDeg,
@@ -247,13 +244,9 @@ export function integrateFragmentDarkFlight({
 }) {
   const azRad = azimuthDeg * DEG_TO_RAD;
   const elevRad = Math.max(5, Math.min(89, entryAngleDeg)) * DEG_TO_RAD;
-  // At dark-flight transition (~22-28 km), luminous velocity has decelerated to ~0.8-2.5 km/s
   const startSpeed = Math.min(Math.max(terminalSpeedMs, 200), 3200);
   const vHoriz = startSpeed * Math.cos(elevRad);
 
-  // If the camera terminus (anchorAltM, e.g. 45.5 km) is above the dark-flight fragmentation
-  // altitude (terminalAltM, e.g. 25 km), start the 3D visual polyline at the exact camera
-  // terminus vertex and transition smoothly into the dark-flight fragmentation state.
   const state = {
     lat: terminalLat * DEG_TO_RAD,
     lon: terminalLon * DEG_TO_RAD,
@@ -267,26 +260,15 @@ export function integrateFragmentDarkFlight({
   const diameter = 2 * Math.cbrt((3 * volume) / (4 * Math.PI));
   const area = Math.PI * (diameter / 2) ** 2 * shapeFactor;
 
-  const track = recordTrack ? [] : null;
-  if (track) {
-    if (
-      Number.isFinite(anchorLat) &&
-      Number.isFinite(anchorLon) &&
-      Number.isFinite(anchorAltM) &&
-      anchorAltM > state.alt + 500
-    ) {
-      track.push({
-        lat: anchorLat,
-        lon: anchorLon,
-        altM: anchorAltM,
-      });
-    }
-    track.push({
-      lat: terminalLat,
-      lon: terminalLon,
-      altM: state.alt,
-    });
-  }
+  const track = recordTrack
+    ? [
+        {
+          lat: terminalLat,
+          lon: terminalLon,
+          altM: state.alt,
+        },
+      ]
+    : null;
 
   function derivAt(s) {
     const atm = getAtmosphere(s.alt);
@@ -304,7 +286,14 @@ export function integrateFragmentDarkFlight({
       atm.viscosity,
       atm.meanFreePath,
     );
-    const q = 0.5 * atm.density * vRel * vRel;
+    // Above 20 km (upper stratosphere / lower mesosphere), include bow-shock
+    // pancaking & ablation deceleration so trajectories starting at 40-50 km
+    // camera termini decelerate continuously into dark flight without artificial altitude clamps.
+    const highAltFactor =
+      s.alt > 20000
+        ? 1 + 45 * Math.pow((s.alt - 20000) / 20000, 1.8)
+        : 1;
+    const q = 0.5 * atm.density * vRel * vRel * highAltFactor;
     const dragAccel = massKg > 0 ? (q * cd * area) / massKg : 0;
 
     const axDrag = vRel > 0 ? (-dragAccel * vRelX) / vRel : 0;
@@ -544,17 +533,15 @@ export function runMultiModelDarkFlight(
     ? Number(t.endAltKm)
     : Number(event.location.altitude);
 
-  // Check if a corroborated partner has a 3D camera trajectory when the primary event
-  // lacks an azimuth or is a ground-clamped ARES fall (altitude === 0).
+  // If this event (e.g. ARES ground fall or CNEOS peak point) is corroborated with
+  // a 3D camera trajectory (ASGARD or GMN), or lacks an azimuth, anchor at the
+  // camera trajectory's exact 3D terminus so the dark-flight curves always start
+  // at the tip of the visible 3D track.
   let azimuthDeg = event?.trajectory?.azimuth;
   let entryAngleDeg = event?.trajectory?.entryAngle ?? 42;
   let borrowedFromPartner = null;
 
-  if (
-    (!Number.isFinite(azimuthDeg) || !(rawAltKm > 0)) &&
-    Array.isArray(event?.possibleMatches)
-  ) {
-    // Prefer an ASGARD or GMN camera partner for 3D terminus geometry, then CNEOS
+  if (Array.isArray(event?.possibleMatches) && event.possibleMatches.length > 0) {
     const partners = event.possibleMatches
       .map((m) => allEvents.find((e) => e.id === m.id))
       .filter((p) => Number.isFinite(p?.trajectory?.azimuth))
@@ -562,24 +549,30 @@ export function runMultiModelDarkFlight(
         const rank = (s) => (s === 'asgard' || s === 'gmn' ? 0 : 1);
         return rank(a.source) - rank(b.source);
       });
-    const partner = partners[0];
-    if (partner) {
+    const cameraPartner = partners.find(
+      (p) => p.source === 'asgard' || p.source === 'gmn',
+    );
+    const partner = cameraPartner || partners[0];
+    if (
+      partner &&
+      (!Number.isFinite(azimuthDeg) ||
+        !(rawAltKm > 0) ||
+        (cameraPartner && event.source !== 'asgard' && event.source !== 'gmn'))
+    ) {
       azimuthDeg = partner.trajectory.azimuth;
       if (Number.isFinite(partner.trajectory.entryAngle)) {
         entryAngleDeg = partner.trajectory.entryAngle;
       }
-      if (!(rawAltKm > 0)) {
-        const pt = partner.trajectory || {};
-        lat = Number.isFinite(pt.endLat)
-          ? Number(pt.endLat)
-          : Number(partner.location.lat);
-        lon = Number.isFinite(pt.endLon)
-          ? Number(pt.endLon)
-          : Number(partner.location.lon);
-        rawAltKm = Number.isFinite(pt.endAltKm)
-          ? Number(pt.endAltKm)
-          : Number(partner.location.altitude);
-      }
+      const pt = partner.trajectory || {};
+      lat = Number.isFinite(pt.endLat)
+        ? Number(pt.endLat)
+        : Number(partner.location.lat);
+      lon = Number.isFinite(pt.endLon)
+        ? Number(pt.endLon)
+        : Number(partner.location.lon);
+      rawAltKm = Number.isFinite(pt.endAltKm)
+        ? Number(pt.endAltKm)
+        : Number(partner.location.altitude);
       borrowedFromPartner = partner.id;
     }
   }
@@ -588,7 +581,7 @@ export function runMultiModelDarkFlight(
     Number.isFinite(rawAltKm) && rawAltKm > 0
       ? Math.min(70000, Math.max(2000, rawAltKm * 1000))
       : 26000;
-  const terminalSpeedMs = 1100;
+  const terminalSpeedMs = 750;
 
   const windHeadingDeg = sounding?.summary?.meanDriftHeadingToDeg ?? 90;
 
@@ -665,41 +658,23 @@ export function runMultiModelDarkFlight(
 
   // Check for documented or user-supplied Found Stones for this fall (or corroborated partners)
   const foundStones = getFoundStonesForEvent(event);
-  const anchorLat = lat;
-  const anchorLon = lon;
-  const anchorAltM = terminalAltM;
-
-  // Fragmentation / dark-flight transition occurs around 24-28 km altitude
-  let effectiveLat = lat;
-  let effectiveLon = lon;
-  let effectiveAltM = Math.min(25000, terminalAltM);
+  // NEVER clamp effectiveAltM below terminalAltM: the 3D RK4 integration must
+  // start at the exact 3D terminus altitude of the track (e.g. 45.5 km).
+  const effectiveLat = lat;
+  const effectiveLon = lon;
+  const effectiveAltM = terminalAltM;
   let activeSounding = sounding;
-  let effectiveSpeedMs = 1350;
+  let effectiveSpeedMs = terminalSpeedMs;
   let effectiveAzimuthDeg = azimuthDeg;
   let effectiveShapeFactor = 1.15;
   let stoneFit = null;
 
   if (foundStones.length > 0) {
-    // Compute stone centroid to anchor cross-track radar/field alignment when autoFit is enabled
-    const stoneMeanLat =
-      foundStones.reduce((s, st) => s + st.lat, 0) / foundStones.length;
-    const stoneMeanLon =
-      foundStones.reduce((s, st) => s + st.lon, 0) / foundStones.length;
-
     if (autoFit) {
-      // Back-project 25km fragmentation release point upwind/uptrack from the stone centroid
-      const azRad = ((azimuthDeg + 180) % 360) * DEG_TO_RAD;
-      const backDistDeg = 0.055; // ~6 km uptrack
-      const candidateLat = stoneMeanLat + Math.cos(azRad) * backDistDeg;
-      const candidateLon =
-        stoneMeanLon +
-        (Math.sin(azRad) * backDistDeg) /
-          Math.max(0.01, Math.cos(stoneMeanLat * DEG_TO_RAD));
-
       stoneFit = autoFitDarkFlightToFoundStones({
         stones: foundStones,
-        terminalLat: candidateLat,
-        terminalLon: candidateLon,
+        terminalLat: effectiveLat,
+        terminalLon: effectiveLon,
         terminalAltM: effectiveAltM,
         terminalSpeedMs: effectiveSpeedMs,
         azimuthDeg,
@@ -707,8 +682,6 @@ export function runMultiModelDarkFlight(
         sounding,
       });
       if (stoneFit?.tuning) {
-        effectiveLat = candidateLat;
-        effectiveLon = candidateLon;
         activeSounding = scaleSoundingWind(sounding, stoneFit.tuning.windScale);
         effectiveSpeedMs =
           effectiveSpeedMs * (stoneFit.tuning.speedScale || 1.0);
@@ -742,9 +715,6 @@ export function runMultiModelDarkFlight(
       terminalLat: effectiveLat,
       terminalLon: effectiveLon,
       terminalAltM: effectiveAltM,
-      anchorLat,
-      anchorLon,
-      anchorAltM,
       terminalSpeedMs: effectiveSpeedMs,
       azimuthDeg: effectiveAzimuthDeg,
       entryAngleDeg,
