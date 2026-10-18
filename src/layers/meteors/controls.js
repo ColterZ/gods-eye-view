@@ -665,7 +665,7 @@ export function createControls({ layerState, services, components, config }) {
           const line3 = hasVelocityVector(selected)
             ? `Rough Directionality Cone: Heading ${azimuth}° ±${cDiag?.directionalitySpreadDeg ?? 18}° (radiant ${radiantAzimuth}° · elev ${entryAngle}°) · ECEF (${vx}, ${vy}, ${vz}) km/s${velCheckStr}`
             : 'Rough Directionality: Velocity vector components not reported for this event';
-          const line4 = `Confidence: ${(selected.confidence?.level || 'high').toUpperCase()} · Single-point US Gov satellite fix (rendered as 3D sphere + rough direction stub, not a camera track)`;
+          const line4 = `Confidence: ${(selected.confidence?.level || 'high').toUpperCase()} · Delayed US Gov sensor catalog (3D airburst sphere + rough direction stub · Fireball report ≠ meteorite fall)`;
           info = `${line1}\n${line2}\n${line3}\n${line4}${matchNote}`;
         }
 
