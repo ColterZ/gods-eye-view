@@ -217,6 +217,7 @@ export function buildAresFallEvents(now = Date.now()) {
     mass: null,
     magnitude: null,
     description: fall.description,
+    survivalEstimate: fall.survivalEstimate || null,
     confidence: {
       level: 'high',
       fields: ['date', 'location', 'nexrad_doppler_signature'],
