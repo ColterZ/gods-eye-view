@@ -173,7 +173,8 @@ export function formatMeteorSceneTitle(event) {
 export function collectEventVisualPoints(event, allEvents = []) {
   const trackPoints = [];
   const darkFlight3DPoints = [];
-  const groundPoints = [];
+  const strewnFieldPoints = [];
+  const recoveryPoints = [];
 
   function addEventGeometry(ev) {
     if (!ev?.location) return;
@@ -181,7 +182,7 @@ export function collectEventVisualPoints(event, allEvents = []) {
     const lon = Number(ev.location.lon);
     const altM = (Number(ev.location.altitude) || 0) * 1000;
     if (Number.isFinite(lat) && Number.isFinite(lon)) {
-      groundPoints.push({ lat, lon, altM: 0 });
+      trackPoints.push({ lat, lon, altM: 0 });
       trackPoints.push({ lat, lon, altM });
     }
     const t = ev.trajectory || {};
@@ -199,7 +200,7 @@ export function collectEventVisualPoints(event, allEvents = []) {
         lon: Number(t.endLon),
         altM: endAltM,
       });
-      groundPoints.push({
+      trackPoints.push({
         lat: Number(t.endLat),
         lon: Number(t.endLon),
         altM: 0,
@@ -238,7 +239,10 @@ export function collectEventVisualPoints(event, allEvents = []) {
 
   if (df?.feasible) {
     for (const band of df.massSweep || []) {
-      groundPoints.push({ lat: band.lat, lon: band.lon, altM: 0 });
+      strewnFieldPoints.push({ lat: band.lat, lon: band.lon, altM: 0 });
+      if (band.massKg <= 0.3) {
+        recoveryPoints.push({ lat: band.lat, lon: band.lon, altM: 0 });
+      }
       if (Array.isArray(band.track)) {
         for (const pt of band.track) {
           darkFlight3DPoints.push({
@@ -254,7 +258,7 @@ export function collectEventVisualPoints(event, allEvents = []) {
       const cosLat = Math.max(0.05, Math.cos(el.center.lat * DEG_TO_RAD));
       const dLat = el.semiMajorM / METERS_PER_DEG_LAT;
       const dLon = el.semiMajorM / (METERS_PER_DEG_LAT * cosLat);
-      groundPoints.push(
+      strewnFieldPoints.push(
         { lat: el.center.lat + dLat, lon: el.center.lon, altM: 0 },
         { lat: el.center.lat - dLat, lon: el.center.lon, altM: 0 },
         { lat: el.center.lat, lon: el.center.lon + dLon, altM: 0 },
@@ -262,27 +266,47 @@ export function collectEventVisualPoints(event, allEvents = []) {
       );
     }
     for (const comp of df.stoneFit?.comparisons || []) {
-      groundPoints.push({
-        lat: comp.stone.lat,
-        lon: comp.stone.lon,
-        altM: 0,
-      });
+      const stPt = { lat: comp.stone.lat, lon: comp.stone.lon, altM: 0 };
+      strewnFieldPoints.push(stPt);
+      recoveryPoints.push(stPt);
       if (comp.simulated) {
-        groundPoints.push({
+        const simPt = {
           lat: comp.simulated.lat,
           lon: comp.simulated.lon,
           altM: 0,
-        });
+        };
+        strewnFieldPoints.push(simPt);
+        recoveryPoints.push(simPt);
       }
     }
   }
 
   const stones = getFoundStonesForEvent(event);
   for (const s of stones) {
-    groundPoints.push({ lat: s.lat, lon: s.lon, altM: 0 });
+    const pt = { lat: s.lat, lon: s.lon, altM: 0 };
+    strewnFieldPoints.push(pt);
+    recoveryPoints.push(pt);
   }
 
-  return { trackPoints, darkFlight3DPoints, groundPoints, stones, df };
+  if (!strewnFieldPoints.length && event?.location) {
+    strewnFieldPoints.push({
+      lat: Number(event.location.lat),
+      lon: Number(event.location.lon),
+      altM: 0,
+    });
+  }
+  if (!recoveryPoints.length) {
+    recoveryPoints.push(...strewnFieldPoints);
+  }
+
+  return {
+    trackPoints,
+    darkFlight3DPoints,
+    strewnFieldPoints,
+    recoveryPoints,
+    stones,
+    df,
+  };
 }
 
 /**
@@ -312,45 +336,47 @@ export function buildMeteorEventSceneRecipe(event, allEvents = []) {
     ? Number(trajSource.trajectory.azimuth)
     : 0;
 
-  const { trackPoints, darkFlight3DPoints, groundPoints, stones } =
-    collectEventVisualPoints(event, allEvents);
+  const {
+    trackPoints,
+    darkFlight3DPoints,
+    strewnFieldPoints,
+    recoveryPoints,
+    stones,
+  } = collectEventVisualPoints(event, allEvents);
 
-  const all3DAndGround = [
-    ...trackPoints,
-    ...darkFlight3DPoints,
-    ...groundPoints,
-  ];
-  const lowerDescentAndGround = [
-    ...darkFlight3DPoints.filter((p) => p.altM <= 28000),
-    ...groundPoints,
-  ];
-
-  const shot1Pose = frame3DPointCloud([...trackPoints, ...groundPoints], {
+  // Shot 1: Complete 3D Entry Track + Corroborated Footprint Overview
+  const shot1Pose = frame3DPointCloud([...trackPoints, ...strewnFieldPoints], {
     headingDeg: azimuth,
     pitchDeg: -50,
-    occupiedFraction: 0.42,
+    occupiedFraction: 0.56,
     minRangeM: 45000,
   });
 
-  const shot2Pose = frame3DPointCloud(all3DAndGround, {
-    headingDeg: (azimuth + 68) % 360,
-    pitchDeg: -38,
-    occupiedFraction: 0.4,
-    minRangeM: 38000,
-  });
+  // Shot 2: Full 3D Dark-Flight Fan (Terminus -> Ground) + Strewn Field (Oblique Side View)
+  const shot2Pose = frame3DPointCloud(
+    [...darkFlight3DPoints, ...strewnFieldPoints],
+    {
+      headingDeg: (azimuth + 68) % 360,
+      pitchDeg: -38,
+      occupiedFraction: 0.54,
+      minRangeM: 32000,
+    },
+  );
 
-  const shot3Pose = frame3DPointCloud(lowerDescentAndGround, {
+  // Shot 3: Full Ground Strewn Field (1kg->3g + 2σ Ellipse + Found Stones)
+  const shot3Pose = frame3DPointCloud(strewnFieldPoints, {
     headingDeg: (azimuth + 14) % 360,
     pitchDeg: -52,
-    occupiedFraction: 0.4,
-    minRangeM: 22000,
+    occupiedFraction: 0.5,
+    minRangeM: 18000,
   });
 
-  const shot4Pose = frame3DPointCloud(groundPoints, {
+  // Shot 4: Recovery Corridor & Found Stones + Mass-Matched Simulated Pins
+  const shot4Pose = frame3DPointCloud(recoveryPoints, {
     headingDeg: (azimuth + 22) % 360,
-    pitchDeg: -62,
-    occupiedFraction: 0.36,
-    minRangeM: 14000,
+    pitchDeg: -60,
+    occupiedFraction: 0.44,
+    minRangeM: 11000,
   });
 
   const baseLayerParams = {
