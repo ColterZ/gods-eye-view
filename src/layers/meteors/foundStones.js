@@ -342,9 +342,9 @@ export function autoFitDarkFlightToFoundStones({
   let bestEval = baseline;
 
   // Stage 1: Coarse joint search over windScale, shapeFactor, azimuthDeltaDeg, speedScale
-  const windScales = [0.7, 0.85, 1.0, 1.2, 1.4];
-  const shapeFactors = [0.9, 1.15, 1.4];
-  const azDeltas = [-8, -4, 0, 4, 8];
+  const windScales = [0.7, 1.0, 1.3, 1.6, 1.9];
+  const shapeFactors = [0.9, 1.15, 1.45];
+  const azDeltas = [-8, -4, 0, 4, 8, 12];
   const speedScales = [0.35, 0.55, 0.8, 1.0, 1.25];
 
   for (const windScale of windScales) {
@@ -384,9 +384,9 @@ export function autoFitDarkFlightToFoundStones({
   }
 
   // Stage 2: Fine-tune terminus release point (latDeltaDeg, lonDeltaDeg, altDeltaKm)
-  // within the camera triangulation 1σ uncertainty cone (±1.1 km horiz, ±1.2 km vert)
-  const latOffsets = [-0.006, -0.003, 0, 0.003, 0.006];
-  const lonOffsets = [-0.008, -0.004, 0, 0.004, 0.008];
+  // within the camera triangulation 2σ terminus uncertainty cone (±2.0 km N/S, ±2.4 km E/W)
+  const latOffsets = [-0.016, -0.01, -0.005, 0, 0.005, 0.01, 0.016];
+  const lonOffsets = [-0.024, -0.012, 0, 0.012, 0.02, 0.028, 0.034];
   const altOffsets = [-1.0, 0, 1.0];
   const baseBest = { ...bestTuning };
 
