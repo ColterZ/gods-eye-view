@@ -867,7 +867,7 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     const recipe = buildMeteorEventSceneRecipe(sims, aresFalls);
     assert.ok(recipe);
     assert.equal(recipe.cameraPath.length, 4);
-    assert.match(recipe.cameraPath[3].title, /Found Stone Map/);
+    assert.match(recipe.cameraPath[3].title, /Found Stones/);
 
     const mockDirector = {
       _project: { scenes: [] },

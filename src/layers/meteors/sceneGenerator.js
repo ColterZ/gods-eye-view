@@ -10,9 +10,11 @@
 
 import { recipeToScene } from '../../scenes/project.js';
 import { getFoundStonesForEvent } from './foundStones.js';
+import { runMultiModelDarkFlight } from './darkFlight.js';
 
 const DEG_TO_RAD = Math.PI / 180;
 const METERS_PER_DEG_LAT = 111320;
+const DEFAULT_VERTICAL_FOV_RAD = (60 * Math.PI) / 180;
 
 /**
  * Compute camera `{ lat, lon, alt, heading, pitch, roll }` so that a camera at
@@ -27,7 +29,7 @@ export function cameraPoseLookingAtTarget({
   headingDeg = 0,
   pitchDeg = -45,
 }) {
-  const safePitch = Math.max(-89, Math.min(-12, Number(pitchDeg) || -45));
+  const safePitch = Math.max(-89, Math.min(-15, Number(pitchDeg) || -45));
   const safeHeading = (((Number(headingDeg) || 0) % 360) + 360) % 360;
   const dz = Math.max(500, cameraAltM - Math.max(0, targetAltM));
   const pitchRad = Math.abs(safePitch) * DEG_TO_RAD;
@@ -54,6 +56,94 @@ export function cameraPoseLookingAtTarget({
 }
 
 /**
+ * Compute a camera pose `{ lat, lon, alt, heading, pitch, roll }` that frames
+ * an arbitrary 3D point cloud `points = [{ lat, lon, altM }, ...]` inside the
+ * unobstructed safe viewport fraction (accounting for side panels and floating
+ * worldOverlay cards).
+ */
+export function frame3DPointCloud(
+  points,
+  {
+    headingDeg = 0,
+    pitchDeg = -45,
+    occupiedFraction = 0.42,
+    minRangeM = 12000,
+    maxRangeM = 650000,
+  } = {},
+) {
+  const valid = (points || []).filter(
+    (p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lon),
+  );
+  if (!valid.length) {
+    return cameraPoseLookingAtTarget({
+      targetLat: 0,
+      targetLon: 0,
+      targetAltM: 0,
+      cameraAltM: minRangeM,
+      headingDeg,
+      pitchDeg,
+    });
+  }
+
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLon = Infinity;
+  let maxLon = -Infinity;
+  let minAltM = Infinity;
+  let maxAltM = -Infinity;
+
+  for (const p of valid) {
+    const alt = Number.isFinite(p.altM) ? Math.max(0, p.altM) : 0;
+    if (p.lat < minLat) minLat = p.lat;
+    if (p.lat > maxLat) maxLat = p.lat;
+    if (p.lon < minLon) minLon = p.lon;
+    if (p.lon > maxLon) maxLon = p.lon;
+    if (alt < minAltM) minAltM = alt;
+    if (alt > maxAltM) maxAltM = alt;
+  }
+
+  const centerLat = (minLat + maxLat) / 2;
+  const centerLon = (minLon + maxLon) / 2;
+  const centerAltM = (minAltM + maxAltM) / 2;
+  const cosLat = Math.max(0.05, Math.cos(centerLat * DEG_TO_RAD));
+
+  let maxRadiusM = 0;
+  for (const p of valid) {
+    const alt = Number.isFinite(p.altM) ? Math.max(0, p.altM) : 0;
+    const dx = (p.lon - centerLon) * METERS_PER_DEG_LAT * cosLat;
+    const dy = (p.lat - centerLat) * METERS_PER_DEG_LAT;
+    const dz = alt - centerAltM;
+    const dist = Math.hypot(dx, dy, dz);
+    if (dist > maxRadiusM) maxRadiusM = dist;
+  }
+
+  // Official cameraFraming math: range = (radius / sin(fov * occupiedFraction / 2)) * padding
+  const safeFraction = Math.max(0.2, Math.min(0.65, occupiedFraction));
+  const desiredAngularRadius = (DEFAULT_VERTICAL_FOV_RAD * safeFraction) / 2;
+  const rawRangeM = (maxRadiusM / Math.sin(desiredAngularRadius)) * 1.22;
+  const rangeM = Math.max(minRangeM, Math.min(maxRangeM, rawRangeM));
+
+  const safePitch = Math.max(-88, Math.min(-22, Number(pitchDeg) || -45));
+  const pitchRad = Math.abs(safePitch) * DEG_TO_RAD;
+
+  // Ensure camera altitude is always above the highest 3D point in the cloud
+  // so high-altitude trajectory starts (e.g. 78 km) are never above the camera!
+  const cameraAltM = Math.max(
+    maxAltM + 6000,
+    centerAltM + rangeM * Math.sin(pitchRad),
+  );
+
+  return cameraPoseLookingAtTarget({
+    targetLat: centerLat,
+    targetLon: centerLon,
+    targetAltM: centerAltM,
+    cameraAltM,
+    headingDeg,
+    pitchDeg: safePitch,
+  });
+}
+
+/**
  * Format a concise human-readable title for a generated meteor scene.
  */
 export function formatMeteorSceneTitle(event) {
@@ -77,18 +167,131 @@ export function formatMeteorSceneTitle(event) {
 }
 
 /**
- * Build a 4-shot SceneDirector recipe for a meteorite skyfall / fireball event.
- *
- * Shots:
- *  1. Regional Atmospheric Entry (high altitude looking along entry trajectory)
- *  2. 3D Luminous Trajectory & Terminus (oblique side-angle with Dark Flight Mass Sweep)
- *  3. Wind-Sorted Strewn Field Corridor (mid-altitude down-track view of All 3 Models)
- *  4. Ground Recovery Target Zone (low-altitude close-up on Found Stones / 100g-50g zone)
+ * Collect all 3D visual points for an event, its corroborated partners, its
+ * dark-flight mass sweep, its 2σ dispersion ellipse, and its found stones.
+ */
+export function collectEventVisualPoints(event, allEvents = []) {
+  const trackPoints = [];
+  const darkFlight3DPoints = [];
+  const groundPoints = [];
+
+  function addEventGeometry(ev) {
+    if (!ev?.location) return;
+    const lat = Number(ev.location.lat);
+    const lon = Number(ev.location.lon);
+    const altM = (Number(ev.location.altitude) || 0) * 1000;
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      groundPoints.push({ lat, lon, altM: 0 });
+      trackPoints.push({ lat, lon, altM });
+    }
+    const t = ev.trajectory || {};
+    if (Number.isFinite(t.startLat) && Number.isFinite(t.startLon)) {
+      trackPoints.push({
+        lat: Number(t.startLat),
+        lon: Number(t.startLon),
+        altM: (Number(t.startAltKm) || 85) * 1000,
+      });
+    }
+    if (Number.isFinite(t.endLat) && Number.isFinite(t.endLon)) {
+      const endAltM = (Number(t.endAltKm) || ev.location.altitude || 45) * 1000;
+      trackPoints.push({
+        lat: Number(t.endLat),
+        lon: Number(t.endLon),
+        altM: endAltM,
+      });
+      groundPoints.push({
+        lat: Number(t.endLat),
+        lon: Number(t.endLon),
+        altM: 0,
+      });
+    } else if (
+      Number.isFinite(t.azimuth) &&
+      Number.isFinite(t.entryAngle) &&
+      altM > 0
+    ) {
+      const radAz = ((t.azimuth + 180) % 360) * DEG_TO_RAD;
+      const radEl = Math.max(10, t.entryAngle) * DEG_TO_RAD;
+      const horizM = 85000 * Math.cos(radEl);
+      const vertM = 85000 * Math.sin(radEl);
+      const cosLat = Math.max(0.05, Math.cos(lat * DEG_TO_RAD));
+      trackPoints.push({
+        lat: lat + (horizM * Math.cos(radAz)) / METERS_PER_DEG_LAT,
+        lon: lon + (horizM * Math.sin(radAz)) / (METERS_PER_DEG_LAT * cosLat),
+        altM: altM + vertM,
+      });
+    }
+  }
+
+  addEventGeometry(event);
+  if (Array.isArray(event?.possibleMatches)) {
+    for (const m of event.possibleMatches) {
+      const partner = allEvents.find((e) => e.id === m.id);
+      if (partner) addEventGeometry(partner);
+    }
+  }
+
+  const df = runMultiModelDarkFlight(event, null, {
+    allEvents,
+    nFragments: 36,
+    autoFit: true,
+  });
+
+  if (df?.feasible) {
+    for (const band of df.massSweep || []) {
+      groundPoints.push({ lat: band.lat, lon: band.lon, altM: 0 });
+      if (Array.isArray(band.track)) {
+        for (const pt of band.track) {
+          darkFlight3DPoints.push({
+            lat: pt.lat,
+            lon: pt.lon,
+            altM: pt.altM,
+          });
+        }
+      }
+    }
+    const el = df.ellipse2Sigma;
+    if (el?.center) {
+      const cosLat = Math.max(0.05, Math.cos(el.center.lat * DEG_TO_RAD));
+      const dLat = el.semiMajorM / METERS_PER_DEG_LAT;
+      const dLon = el.semiMajorM / (METERS_PER_DEG_LAT * cosLat);
+      groundPoints.push(
+        { lat: el.center.lat + dLat, lon: el.center.lon, altM: 0 },
+        { lat: el.center.lat - dLat, lon: el.center.lon, altM: 0 },
+        { lat: el.center.lat, lon: el.center.lon + dLon, altM: 0 },
+        { lat: el.center.lat, lon: el.center.lon - dLon, altM: 0 },
+      );
+    }
+    for (const comp of df.stoneFit?.comparisons || []) {
+      groundPoints.push({
+        lat: comp.stone.lat,
+        lon: comp.stone.lon,
+        altM: 0,
+      });
+      if (comp.simulated) {
+        groundPoints.push({
+          lat: comp.simulated.lat,
+          lon: comp.simulated.lon,
+          altM: 0,
+        });
+      }
+    }
+  }
+
+  const stones = getFoundStonesForEvent(event);
+  for (const s of stones) {
+    groundPoints.push({ lat: s.lat, lon: s.lon, altM: 0 });
+  }
+
+  return { trackPoints, darkFlight3DPoints, groundPoints, stones, df };
+}
+
+/**
+ * Build a 4-shot SceneDirector recipe for a meteorite skyfall / fireball event
+ * where every shot frames 100% of its relevant 3D and ground visual elements.
  */
 export function buildMeteorEventSceneRecipe(event, allEvents = []) {
   if (!event || !event.location) return null;
 
-  // Resolve 3D trajectory geometry (from event or corroborated camera partner)
   let trajSource = event;
   if (
     (!Number.isFinite(event.trajectory?.azimuth) ||
@@ -105,82 +308,49 @@ export function buildMeteorEventSceneRecipe(event, allEvents = []) {
     if (partners[0]) trajSource = partners[0];
   }
 
-  const t = trajSource.trajectory || {};
-  const endLat = Number.isFinite(t.endLat)
-    ? Number(t.endLat)
-    : Number(trajSource.location?.lat ?? event.location.lat);
-  const endLon = Number.isFinite(t.endLon)
-    ? Number(t.endLon)
-    : Number(trajSource.location?.lon ?? event.location.lon);
-  const endAltKm = Number.isFinite(t.endAltKm)
-    ? Number(t.endAltKm)
-    : Number(trajSource.location?.altitude) || 35;
+  const azimuth = Number.isFinite(trajSource.trajectory?.azimuth)
+    ? Number(trajSource.trajectory.azimuth)
+    : 0;
 
-  const startLat = Number.isFinite(t.startLat) ? Number(t.startLat) : endLat;
-  const startLon = Number.isFinite(t.startLon) ? Number(t.startLon) : endLon;
-  const startAltKm = Number.isFinite(t.startAltKm)
-    ? Number(t.startAltKm)
-    : endAltKm + 35;
+  const { trackPoints, darkFlight3DPoints, groundPoints, stones } =
+    collectEventVisualPoints(event, allEvents);
 
-  const azimuth = Number.isFinite(t.azimuth) ? Number(t.azimuth) : 0;
+  const all3DAndGround = [
+    ...trackPoints,
+    ...darkFlight3DPoints,
+    ...groundPoints,
+  ];
+  const lowerDescentAndGround = [
+    ...darkFlight3DPoints.filter((p) => p.altM <= 28000),
+    ...groundPoints,
+  ];
 
-  // Midpoint of luminous entry track for Shot 1
-  const midLat = (startLat + endLat) / 2;
-  const midLon = (startLon + endLon) / 2;
-  const midAltM = ((startAltKm + endAltKm) / 2) * 1000;
-
-  // Ground strewn-field / recovery target for Shots 3 & 4
-  const stones = getFoundStonesForEvent(event);
-  let recoveryLat = Number(event.location.lat);
-  let recoveryLon = Number(event.location.lon);
-
-  if (stones.length > 0) {
-    recoveryLat = stones.reduce((s, st) => s + st.lat, 0) / stones.length;
-    recoveryLon = stones.reduce((s, st) => s + st.lon, 0) / stones.length;
-  } else {
-    // Project ~6 km downrange from terminus along azimuth
-    const azRad = azimuth * DEG_TO_RAD;
-    recoveryLat = endLat + Math.cos(azRad) * 0.05;
-    recoveryLon =
-      endLon +
-      (Math.sin(azRad) * 0.05) /
-        Math.max(0.05, Math.cos(endLat * DEG_TO_RAD));
-  }
-
-  const shot1Pose = cameraPoseLookingAtTarget({
-    targetLat: midLat,
-    targetLon: midLon,
-    targetAltM: Math.min(45000, midAltM),
-    cameraAltM: 145000,
+  const shot1Pose = frame3DPointCloud([...trackPoints, ...groundPoints], {
     headingDeg: azimuth,
-    pitchDeg: -48,
+    pitchDeg: -50,
+    occupiedFraction: 0.42,
+    minRangeM: 45000,
   });
 
-  const shot2Pose = cameraPoseLookingAtTarget({
-    targetLat: (endLat + recoveryLat) / 2,
-    targetLon: (endLon + recoveryLon) / 2,
-    targetAltM: Math.min(22000, endAltKm * 500),
-    cameraAltM: 56000,
-    headingDeg: (azimuth + 62) % 360,
-    pitchDeg: -32,
+  const shot2Pose = frame3DPointCloud(all3DAndGround, {
+    headingDeg: (azimuth + 68) % 360,
+    pitchDeg: -38,
+    occupiedFraction: 0.4,
+    minRangeM: 38000,
   });
 
-  const shot3Pose = cameraPoseLookingAtTarget({
-    targetLat: recoveryLat,
-    targetLon: recoveryLon,
-    targetAltM: 0,
-    cameraAltM: 18500,
-    headingDeg: (azimuth + 12) % 360,
-    pitchDeg: -44,
+  const shot3Pose = frame3DPointCloud(lowerDescentAndGround, {
+    headingDeg: (azimuth + 14) % 360,
+    pitchDeg: -52,
+    occupiedFraction: 0.4,
+    minRangeM: 22000,
   });
 
-  const shot4Pose = cameraPoseLookingAtTarget({
-    targetLat: recoveryLat,
-    targetLon: recoveryLon,
-    targetAltM: 0,
-    cameraAltM: stones.length > 0 ? 5200 : 8500,
-    headingDeg: (azimuth + 25) % 360,
-    pitchDeg: -54,
+  const shot4Pose = frame3DPointCloud(groundPoints, {
+    headingDeg: (azimuth + 22) % 360,
+    pitchDeg: -62,
+    occupiedFraction: 0.36,
+    minRangeM: 14000,
   });
 
   const baseLayerParams = {
@@ -209,10 +379,10 @@ export function buildMeteorEventSceneRecipe(event, allEvents = []) {
     },
     cameraPath: [
       {
-        title: '1. Regional Atmospheric Entry',
+        title: '1. Complete 3D Entry & Regional Overview',
         ...shot1Pose,
         duration: 3.2,
-        hold: 1.6,
+        hold: 1.8,
         layers: {
           meteors: {
             enabled: true,
@@ -221,10 +391,10 @@ export function buildMeteorEventSceneRecipe(event, allEvents = []) {
         },
       },
       {
-        title: '2. 3D Luminous Trajectory & Terminus',
+        title: '2. Full 3D Trajectory & Dark Flight Mass Fan',
         ...shot2Pose,
         duration: 3.4,
-        hold: 2.2,
+        hold: 2.4,
         layers: {
           meteors: {
             enabled: true,
@@ -238,10 +408,10 @@ export function buildMeteorEventSceneRecipe(event, allEvents = []) {
         },
       },
       {
-        title: '3. Wind-Sorted Strewn Field Corridor',
+        title: '3. Full Strewn Field & 3D Descent Corridor',
         ...shot3Pose,
         duration: 3.4,
-        hold: 2.4,
+        hold: 2.6,
         layers: {
           meteors: {
             enabled: true,
@@ -257,11 +427,11 @@ export function buildMeteorEventSceneRecipe(event, allEvents = []) {
       {
         title:
           stones.length > 0
-            ? `4. Found Stone Map (${stones.length} Recoveries)`
-            : '4. Ground Recovery Target Zone',
+            ? `4. Full Strewn Field & Found Stones (${stones.length} Recoveries)`
+            : '4. Ground Strewn Field & Mass Sorting Spine',
         ...shot4Pose,
         duration: 3.2,
-        hold: 3.2,
+        hold: 3.4,
         layers: {
           meteors: {
             enabled: true,

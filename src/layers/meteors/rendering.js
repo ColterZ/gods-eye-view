@@ -501,10 +501,14 @@ export function createRendering({ layerState, services, components, config }) {
       layerState._pickEventIdByEntityId.set(vectorId, id);
     }
 
-    const sphere = Cesium.BoundingSphere.fromPoints(extent);
-    sphere.radius = Math.max(sphere.radius, 350_000);
-    horizon.sphere = sphere;
-    layerState._spheresByEventId.set(id, sphere);
+    const focusSphere = Cesium.BoundingSphere.fromPoints(extent);
+    focusSphere.radius = Math.max(focusSphere.radius * 1.65, 25_000);
+    const horizonSphere = new Cesium.BoundingSphere(
+      focusSphere.center,
+      Math.max(focusSphere.radius, 350_000),
+    );
+    horizon.sphere = horizonSphere;
+    layerState._spheresByEventId.set(id, focusSphere);
     layerState._horizonItems.push(horizon);
 
     const renderedItem = {
@@ -582,7 +586,35 @@ export function createRendering({ layerState, services, components, config }) {
   }
 
   function getFocusSphere(eventId) {
-    return layerState._spheresByEventId.get(eventId) || null;
+    const baseSphere = layerState._spheresByEventId.get(eventId) || null;
+    if (
+      !baseSphere ||
+      !layerState._darkFlightActive ||
+      layerState._darkFlightResult?.eventId !== eventId ||
+      !layerState._darkFlightResult?.feasible
+    ) {
+      return baseSphere;
+    }
+    const df = layerState._darkFlightResult;
+    const pts = [];
+    for (const band of df.massSweep || []) {
+      pts.push(Cesium.Cartesian3.fromDegrees(band.lon, band.lat, 0));
+      if (Array.isArray(band.track)) {
+        for (const p of band.track) {
+          pts.push(Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.altM));
+        }
+      }
+    }
+    for (const comp of df.stoneFit?.comparisons || []) {
+      pts.push(
+        Cesium.Cartesian3.fromDegrees(comp.stone.lon, comp.stone.lat, 0),
+      );
+    }
+    if (!pts.length) return baseSphere;
+    const dfSphere = Cesium.BoundingSphere.fromPoints(pts);
+    const combined = Cesium.BoundingSphere.union(baseSphere, dfSphere);
+    combined.radius = Math.max(combined.radius * 1.45, 18_000);
+    return combined;
   }
 
   function resolvePickedEventId(picked) {
