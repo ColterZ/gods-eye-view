@@ -17,6 +17,13 @@
  *     historical upper-air wind sounding).
  */
 
+import {
+  getFoundStonesForEvent,
+  evaluateFoundStoneResiduals,
+  autoFitDarkFlightToFoundStones,
+  scaleSoundingWind,
+} from './foundStones.js';
+
 const R_GAS = 287.058;
 const GAMMA = 1.4;
 const G = 9.80665;
@@ -487,7 +494,7 @@ export function evaluateSurvivalPhysics(event) {
 export function runMultiModelDarkFlight(
   event,
   sounding,
-  { allEvents = [], nFragments = 160 } = {},
+  { allEvents = [], nFragments = 160, autoFit = false } = {},
 ) {
   const physicsGate = evaluateSurvivalPhysics(event);
   if (!physicsGate.survivable) {
@@ -562,7 +569,7 @@ export function runMultiModelDarkFlight(
     Number.isFinite(rawAltKm) && rawAltKm > 0
       ? Math.min(70000, Math.max(2000, rawAltKm * 1000))
       : 26000;
-  const terminalSpeedMs = 2400;
+  const terminalSpeedMs = 1100;
 
   const windHeadingDeg = sounding?.summary?.meanDriftHeadingToDeg ?? 90;
 
@@ -637,17 +644,67 @@ export function runMultiModelDarkFlight(
     };
   }
 
+  // Check for documented or user-supplied Found Stones for this fall (or corroborated partners)
+  const foundStones = getFoundStonesForEvent(event);
+  let activeSounding = sounding;
+  const effectiveAltM = terminalAltM;
+  let effectiveSpeedMs = terminalSpeedMs;
+  let effectiveAzimuthDeg = azimuthDeg;
+  let effectiveShapeFactor = 1.15;
+  let stoneFit = null;
+
+  if (foundStones.length > 0) {
+    if (autoFit) {
+      stoneFit = autoFitDarkFlightToFoundStones({
+        stones: foundStones,
+        terminalLat: lat,
+        terminalLon: lon,
+        terminalAltM,
+        terminalSpeedMs,
+        azimuthDeg,
+        entryAngleDeg,
+        sounding,
+      });
+      if (stoneFit?.tuning) {
+        activeSounding = scaleSoundingWind(sounding, stoneFit.tuning.windScale);
+        effectiveSpeedMs =
+          terminalSpeedMs * (stoneFit.tuning.speedScale || 1.0);
+        effectiveAzimuthDeg =
+          (azimuthDeg + stoneFit.tuning.azimuthDeltaDeg + 360) % 360;
+        effectiveShapeFactor = stoneFit.tuning.shapeFactor;
+      }
+    } else {
+      const baseEval = evaluateFoundStoneResiduals({
+        stones: foundStones,
+        terminalLat: lat,
+        terminalLon: lon,
+        terminalAltM,
+        terminalSpeedMs,
+        azimuthDeg,
+        entryAngleDeg,
+        sounding,
+      });
+      stoneFit = {
+        baselineRmsM: baseEval.rmsErrorM,
+        bestRmsM: baseEval.rmsErrorM,
+        tuning: null,
+        comparisons: baseEval.comparisons,
+      };
+    }
+  }
+
   // REGIME B: Full 3-Model Strewn Field (Deterministic Spine + Monte Carlo + Cross-Calibration)
   const massSweep = CANONICAL_MASS_SWEEP.map((band) => {
     const res = integrateFragmentDarkFlight({
       terminalLat: lat,
       terminalLon: lon,
-      terminalAltM,
-      terminalSpeedMs,
-      azimuthDeg,
+      terminalAltM: effectiveAltM,
+      terminalSpeedMs: effectiveSpeedMs,
+      azimuthDeg: effectiveAzimuthDeg,
       entryAngleDeg,
       massKg: band.massKg,
-      sounding,
+      shapeFactor: effectiveShapeFactor,
+      sounding: activeSounding,
       recordTrack: true,
     });
     return res ? { ...res, label: band.label, color: band.color } : null;
@@ -663,13 +720,16 @@ export function runMultiModelDarkFlight(
     const imp = integrateFragmentDarkFlight({
       terminalLat: lat + rng.gaussian() * 0.004,
       terminalLon: lon + rng.gaussian() * 0.004,
-      terminalAltM: terminalAltM + rng.gaussian() * 250,
-      terminalSpeedMs: terminalSpeedMs * (1 + rng.gaussian() * 0.06),
-      azimuthDeg: azimuthDeg + rng.gaussian() * 2.2,
+      terminalAltM: effectiveAltM + rng.gaussian() * 250,
+      terminalSpeedMs: effectiveSpeedMs * (1 + rng.gaussian() * 0.06),
+      azimuthDeg: effectiveAzimuthDeg + rng.gaussian() * 2.2,
       entryAngleDeg: entryAngleDeg + rng.gaussian() * 1.8,
       massKg,
-      shapeFactor: Math.max(0.85, 1.15 + rng.gaussian() * 0.15),
-      sounding,
+      shapeFactor: Math.max(
+        0.85,
+        effectiveShapeFactor + rng.gaussian() * 0.15,
+      ),
+      sounding: activeSounding,
       recordTrack: false,
     });
     if (imp) monteCarloImpacts.push(imp);
@@ -736,6 +796,8 @@ export function runMultiModelDarkFlight(
     monteCarloImpacts,
     ellipse2Sigma,
     ellipseInnerCore,
+    foundStones,
+    stoneFit,
     calibration: {
       crossModelOffsetM,
       alongTrackKm,

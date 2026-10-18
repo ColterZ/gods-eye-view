@@ -27,6 +27,10 @@ import {
 } from './model.js';
 import { formatShowerLabel } from './corroboration.js';
 import { runMultiModelDarkFlight } from './darkFlight.js';
+import {
+  getFoundStonesForEvent,
+  setCustomFoundStones,
+} from './foundStones.js';
 
 export function createControls({ layerState, services, components, config }) {
   const openLink =
@@ -70,6 +74,7 @@ export function createControls({ layerState, services, components, config }) {
       }
       layerState._darkFlightResult = runMultiModelDarkFlight(ev, sounding, {
         allEvents: layerState._events,
+        autoFit: layerState._darkFlightAutoFit,
       });
       components.rendering.renderDarkFlight();
     } finally {
@@ -230,6 +235,23 @@ export function createControls({ layerState, services, components, config }) {
         changed = true;
       }
 
+      if (params.toggleAutoFit === true) {
+        layerState._darkFlightAutoFit = !layerState._darkFlightAutoFit;
+        layerState._darkFlightActive = true;
+        executeDarkFlightForSelected();
+        changed = true;
+      }
+
+      if (Array.isArray(params.setFoundStones)) {
+        const targetId = params.eventId || layerState._selectedEventId;
+        if (targetId) {
+          setCustomFoundStones(targetId, params.setFoundStones);
+          layerState._darkFlightActive = true;
+          executeDarkFlightForSelected();
+          changed = true;
+        }
+      }
+
       if (
         typeof params.darkFlightMode === 'string' &&
         ['all', 'sweep', 'montecarlo'].includes(params.darkFlightMode)
@@ -365,6 +387,18 @@ export function createControls({ layerState, services, components, config }) {
               params: { darkFlightMode: 'montecarlo' },
             },
           );
+          if (getFoundStonesForEvent(selected).length > 0) {
+            chips.push({
+              id: 'df-auto-fit',
+              label: layerState._darkFlightAutoFit
+                ? '🔧 FIT: ON'
+                : '🔧 AUTO-FIT STONES',
+              active: layerState._darkFlightAutoFit,
+              title:
+                'Fine-tune wind scale, drag shape factor, and altitude/azimuth against documented found stones',
+              params: { toggleAutoFit: true },
+            });
+          }
         }
         if (
           Array.isArray(selected.possibleMatches) &&
@@ -529,6 +563,22 @@ export function createControls({ layerState, services, components, config }) {
               const dfLine2 = `⚡ Dark Flight [${regimeLabel}]: 10kg→1g sorting ${cal.alongTrackKm ?? 0} km · ${elStr}`;
               const dfLine3 = `⚡ Cross-Reference: ${Number.isFinite(cal.crossModelOffsetM) ? `Spine↔MC centroid Δ=${cal.crossModelOffsetM} m` : cal.note}${Number.isFinite(cal.aresResidualM) ? ` · Confirmed fall (${cal.matchedFallName}) residual=${cal.aresResidualM} m` : ''} · MODEL ESTIMATE (not confirmed recovery zone)`;
               info += `\n${sndLine}\n${dfLine2}\n${dfLine3}`;
+              if (
+                df.stoneFit?.comparisons &&
+                df.stoneFit.comparisons.length > 0
+              ) {
+                const sf = df.stoneFit;
+                const stoneSummary = sf.comparisons
+                  .map(
+                    (c) =>
+                      `${c.stone.label} (${c.stone.massGrams}g): Δ=${c.errorM}m`,
+                  )
+                  .join(' · ');
+                const tuneNote = sf.tuning
+                  ? ` [Auto-Fit: wind ${sf.tuning.windScale}×, shape ${sf.tuning.shapeFactor}, vel ${sf.tuning.speedScale ?? 1}×, az ${sf.tuning.azimuthDeltaDeg >= 0 ? '+' : ''}${sf.tuning.azimuthDeltaDeg}° → RMS ${sf.baselineRmsM}m → ${sf.bestRmsM}m]`
+                  : ` [RMS ${sf.bestRmsM}m]`;
+                info += `\n◆ Found Stones (${sf.comparisons.length})${tuneNote}: ${stoneSummary}`;
+              }
             }
           }
         }

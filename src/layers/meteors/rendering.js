@@ -155,6 +155,30 @@ export function createRendering({ layerState, services, components, config }) {
           });
         }
       }
+      const stoneComparisons = df.stoneFit?.comparisons || [];
+      for (const comp of stoneComparisons.slice(0, 4)) {
+        entries.push({
+          id: `meteor-df:stone:${comp.stone.id}`,
+          position: Cesium.Cartesian3.fromDegrees(
+            comp.stone.lon,
+            comp.stone.lat,
+            0,
+          ),
+          variant: 'card',
+          cardStyle: 'tactical',
+          collisionGroup: 'ambient-card',
+          title: `◆ ${comp.stone.label} (${comp.stone.massGrams}g)`,
+          details: [`Sim vs Found Δ=${comp.errorM}m (${comp.bearingDeg}°)`],
+          accent: '#10b981',
+          selected: false,
+          protected: true,
+          priority: Number.MAX_SAFE_INTEGER - 5,
+          gapPx: 14,
+          verticalOnly: true,
+          horizonCull: true,
+          interactive: false,
+        });
+      }
     }
     overlayHost.setVisible?.(METEORS_OVERLAY_SOURCE_ID, true);
     overlayHost.setEntries?.(METEORS_OVERLAY_SOURCE_ID, entries, {
@@ -302,6 +326,46 @@ export function createRendering({ layerState, services, components, config }) {
           },
         });
         layerState._darkFlightEntities.push(impactEnt);
+      }
+    }
+
+    // 3. Render Found Stones & Mass-Matched Residual Error Vectors
+    const stoneComparisons = df.stoneFit?.comparisons || [];
+    for (const comp of stoneComparisons) {
+      const { stone, simulated } = comp;
+      const stoneEnt = layerState._dataSource.entities.add({
+        id: `df:${df.eventId}:stone:${stone.id}`,
+        position: Cesium.Cartesian3.fromDegrees(stone.lon, stone.lat, 0),
+        point: {
+          pixelSize: 11,
+          color: Cesium.Color.fromCssColorString('#10b981'),
+          outlineColor: Cesium.Color.WHITE,
+          outlineWidth: 2.5,
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      layerState._darkFlightEntities.push(stoneEnt);
+
+      if (simulated) {
+        const resLine = layerState._dataSource.entities.add({
+          id: `df:${df.eventId}:res:${stone.id}`,
+          polyline: {
+            positions: Cesium.Cartesian3.fromDegreesArray([
+              simulated.lon,
+              simulated.lat,
+              stone.lon,
+              stone.lat,
+            ]),
+            width: 2.5,
+            material: new Cesium.PolylineDashMaterialProperty({
+              color: Cesium.Color.fromCssColorString('#f43f5e'),
+              dashLength: 12,
+            }),
+            clampToGround: true,
+          },
+        });
+        layerState._darkFlightEntities.push(resLine);
       }
     }
 

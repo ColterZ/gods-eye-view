@@ -26,6 +26,10 @@ import {
   runMultiModelDarkFlight,
 } from './darkFlight.js';
 import {
+  getFoundStonesForEvent,
+  setCustomFoundStones,
+} from './foundStones.js';
+import {
   filterEventsByWindow,
   severityTier,
   buildMeteorCardModel,
@@ -633,7 +637,7 @@ describe('Stage 2: GMN, NASA ASGARD, ARES Falls & Cross-Source Corroboration', (
       id: 'cneos:2026-08-14 08:10:00',
       source: 'cneos',
       eventTime: '2026-08-14T08:10:00.000Z',
-      location: { lat: 47.05, lon: -119.3, altitude: 32 },
+      location: { lat: 47.82, lon: -119.38, altitude: 32 },
       energy: { impact: 0.45, radiated: 12 },
       trajectory: { entryVelocity: 15.2 },
     };
@@ -641,16 +645,16 @@ describe('Stage 2: GMN, NASA ASGARD, ARES Falls & Cross-Source Corroboration', (
       id: 'gmn:20260814081002_xyz',
       source: 'gmn',
       eventTime: '2026-08-14T08:10:02.000Z',
-      location: { lat: 47.04, lon: -119.34, altitude: 31.5 },
+      location: { lat: 47.84, lon: -119.4, altitude: 31.5 },
       magnitude: -5.8,
       mass: 0.015,
       orbit: { showerCode: 'PER', orbitalClass: 'Halley-Type' },
       trajectory: {
-        startLat: 47.3,
-        startLon: -119.0,
+        startLat: 47.41,
+        startLon: -119.41,
         startAltKm: 110,
-        endLat: 47.04,
-        endLon: -119.34,
+        endLat: 47.84,
+        endLon: -119.4,
         endAltKm: 31.5,
         entryVelocity: 59.1,
       },
@@ -795,5 +799,48 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     assert.equal(zoneResult.massSweep.length, 5);
     assert.ok(zoneResult.ellipse2Sigma.semiMajorM > 0);
     assert.ok(zoneResult.ellipseInnerCore.semiMajorM > 0);
+  });
+
+  it('(13) getFoundStonesForEvent, setCustomFoundStones, and autoFitDarkFlightToFoundStones compute per-stone mass residuals and fine-tune parameters', () => {
+    const simsEvent = {
+      id: 'cneos:2026-08-14 07:48:00',
+      source: 'cneos',
+      location: { lat: 47.8501, lon: -119.4084, altitude: 45.5 },
+      trajectory: {
+        entryVelocity: 14.6,
+        azimuth: 0,
+        entryAngle: 33.6,
+        vx: 5.2,
+        vy: 22.3,
+        vz: 0.2,
+      },
+      possibleMatches: [{ id: 'ares:sims-corner-wa', source: 'ARES' }],
+    };
+
+    const stones = getFoundStonesForEvent(simsEvent);
+    assert.equal(stones.length, 3);
+
+    const baselineDf = runMultiModelDarkFlight(simsEvent, sampleSounding, {
+      nFragments: 40,
+      autoFit: false,
+    });
+    assert.equal(baselineDf.stoneFit.comparisons.length, 3);
+    assert.ok(Number.isFinite(baselineDf.stoneFit.baselineRmsM));
+
+    const fittedDf = runMultiModelDarkFlight(simsEvent, sampleSounding, {
+      nFragments: 40,
+      autoFit: true,
+    });
+    assert.ok(fittedDf.stoneFit.tuning);
+    assert.ok(
+      fittedDf.stoneFit.bestRmsM <= baselineDf.stoneFit.baselineRmsM,
+      'autoFit should reduce or match baseline RMS error',
+    );
+
+    const custom = setCustomFoundStones('custom:event', [
+      { lat: 35.1, lon: -106.5, massGrams: 250, label: 'Test Stone A' },
+    ]);
+    assert.equal(custom.length, 1);
+    assert.equal(getFoundStonesForEvent({ id: 'custom:event' }).length, 1);
   });
 });

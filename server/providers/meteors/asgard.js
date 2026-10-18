@@ -14,11 +14,11 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
   {
     id: 'ares:sims-corner-wa',
     name: 'Sims Corner, WA',
-    lat: 47.0379,
-    lon: -119.35,
+    lat: 47.8155,
+    lon: -119.3625,
     date: '2026-08-14',
     description:
-      'Confirmed meteorite fall detected on GOES East/West GLM and NOAA NEXRAD radar.',
+      'Confirmed meteorite fall in Douglas County, WA detected on GOES East/West GLM and NOAA NEXRAD radar.',
   },
   {
     id: 'ares:cockburn-island-on',

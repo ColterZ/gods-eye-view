@@ -37,5 +37,6 @@ export { createControls } from './controls.js';
 export { createLifecycle } from './lifecycle.js';
 export * from './corroboration.js';
 export * from './darkFlight.js';
+export * from './foundStones.js';
 export * from './model.js';
 export * from './policy.js';
