@@ -36,6 +36,12 @@ export function createMeteorsState({ services, config }) {
   layerState._horizonItems = [];
   layerState._renderedItems = [];
 
+  layerState._darkFlightActive = false;
+  layerState._darkFlightMode = 'all';
+  layerState._darkFlightLoading = false;
+  layerState._darkFlightResult = null;
+  layerState._darkFlightEntities = [];
+
   layerState.notify = () => {
     layerState._listener?.();
   };

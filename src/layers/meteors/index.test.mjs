@@ -18,6 +18,14 @@ import {
   formatShowerLabel,
 } from './corroboration.js';
 import {
+  parseOpenMeteoSounding,
+  windSpeedDirToUV,
+} from '../../../server/providers/meteors/sounding.js';
+import {
+  evaluateSurvivalPhysics,
+  runMultiModelDarkFlight,
+} from './darkFlight.js';
+import {
   filterEventsByWindow,
   severityTier,
   buildMeteorCardModel,
@@ -672,5 +680,120 @@ describe('Stage 2: GMN, NASA ASGARD, ARES Falls & Cross-Source Corroboration', (
       filterEventsByWindow(combined, '1y', refMs, 'matched').length,
       3,
     );
+  });
+});
+
+describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zone of Possibility', () => {
+  const sampleSounding = parseOpenMeteoSounding(
+    {
+      hourly: {
+        time: ['2026-08-14T00:00', '2026-08-14T08:00'],
+        temperature_2m: [18, 21],
+        pressure_msl: [1012, 1013],
+        wind_speed_10m: [3, 4],
+        wind_direction_10m: [270, 270], // blowing from West -> East (+u)
+        wind_speed_850hPa: [8, 10],
+        wind_direction_850hPa: [260, 260],
+        geopotential_height_850hPa: [1500, 1520],
+        temperature_850hPa: [10, 11],
+        wind_speed_500hPa: [15, 18],
+        wind_direction_500hPa: [250, 250],
+        geopotential_height_500hPa: [5600, 5620],
+        temperature_500hPa: [-15, -14],
+        wind_speed_300hPa: [32, 38],
+        wind_direction_300hPa: [270, 270],
+        geopotential_height_300hPa: [9200, 9250],
+        temperature_300hPa: [-42, -41],
+        wind_speed_50hPa: [12, 14],
+        wind_direction_50hPa: [280, 280],
+        geopotential_height_50hPa: [20600, 20650],
+        temperature_50hPa: [-55, -54],
+      },
+    },
+    {
+      lat: 47.04,
+      lon: -119.35,
+      targetIso: '2026-08-14T08:00:00Z',
+      targetHourUtc: 1,
+    },
+  );
+
+  it('(10) parseOpenMeteoSounding converts meteorological wind directions into East/North UV and summarizes jet stream peak', () => {
+    const uvWest = windSpeedDirToUV(10, 270); // From West (270°) blows East (+u = +10)
+    assert.equal(uvWest.u, 10);
+    assert.equal(uvWest.v, 0);
+
+    assert.equal(sampleSounding.summary.peakWindSpeedMs, 38);
+    assert.equal(sampleSounding.summary.peakWindHeadingToDeg, 90);
+    assert.ok(sampleSounding.samples.length >= 5);
+  });
+
+  it('(11) evaluateSurvivalPhysics enforces hard limits on high-altitude complete ablation', () => {
+    const highAltGmn = {
+      id: 'gmn:high',
+      source: 'gmn',
+      location: { lat: 35, lon: -110, altitude: 88.4 },
+      mass: 0.0004,
+      trajectory: { entryVelocity: 66.2, azimuth: 140, entryAngle: 42 },
+    };
+    const gate = evaluateSurvivalPhysics(highAltGmn);
+    assert.equal(gate.survivable, false);
+    assert.equal(gate.regime, 'ablation-complete');
+
+    const df = runMultiModelDarkFlight(highAltGmn, sampleSounding);
+    assert.equal(df.feasible, false);
+    assert.equal(df.massSweep.length, 0);
+  });
+
+  it('(12) runMultiModelDarkFlight runs 3-model strewn field (5-mass spine + Monte Carlo + ARES cross-calibration) and Weighted Zone of Possibility', () => {
+    const aresFall = {
+      id: 'ares:sims-corner-wa',
+      source: 'ares',
+      name: 'Sims Corner, WA',
+      location: { lat: 47.04, lon: -119.35, altitude: 0 },
+    };
+    const fullVectorEvent = {
+      id: 'cneos:2026-08-14 07:48:00',
+      source: 'cneos',
+      location: { lat: 47.06, lon: -119.42, altitude: 28 },
+      trajectory: {
+        entryVelocity: 14.2,
+        azimuth: 95,
+        entryAngle: 45,
+        vx: -8,
+        vy: -9,
+        vz: -7,
+      },
+      possibleMatches: [{ id: 'ares:sims-corner-wa', source: 'ARES' }],
+    };
+
+    const fullResult = runMultiModelDarkFlight(fullVectorEvent, sampleSounding, {
+      allEvents: [fullVectorEvent, aresFall],
+      nFragments: 80,
+    });
+    assert.equal(fullResult.feasible, true);
+    assert.equal(fullResult.regime, 'full-3d-strewn-field');
+    assert.equal(fullResult.massSweep.length, 5);
+    assert.equal(fullResult.monteCarloImpacts.length, 80);
+    assert.ok(fullResult.ellipse2Sigma.semiMajorM > 0);
+    assert.ok(Number.isFinite(fullResult.calibration.crossModelOffsetM));
+    assert.ok(Number.isFinite(fullResult.calibration.aresResidualM));
+    assert.ok(fullResult.calibration.alongTrackKm > 0);
+
+    // Partial-data event without entry azimuth -> Weighted Directional Zone of Possibility
+    const noVectorEvent = {
+      id: 'cneos:no-vector',
+      source: 'cneos',
+      location: { lat: 47.04, lon: -119.35, altitude: 27 },
+      trajectory: { entryVelocity: 15.0, azimuth: null, entryAngle: null },
+    };
+    const zoneResult = runMultiModelDarkFlight(noVectorEvent, sampleSounding, {
+      nFragments: 80,
+    });
+    assert.equal(zoneResult.feasible, true);
+    assert.equal(zoneResult.regime, 'zone-of-possibility');
+    assert.equal(zoneResult.massSweep.length, 5);
+    assert.ok(zoneResult.ellipse2Sigma.semiMajorM > 0);
+    assert.ok(zoneResult.ellipseInnerCore.semiMajorM > 0);
   });
 });

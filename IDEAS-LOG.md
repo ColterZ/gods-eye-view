@@ -35,6 +35,15 @@
 - Created `src/layers/meteors/corroboration.js`: non-destructive spatiotemporal matcher across `CNEOS`, `GMN`, `ASGARD`, and `ARES` (discovered 23 real cross-source corroborated events in the live 5Y window, including the 3-way Sims Corner WA match across ARES + CNEOS + ASGARD).
 - Upgraded `src/layers/meteors/` with source filter chips (`ALL`, `CNEOS`, `GMN`, `ASGARD`, `FALLS`, `★ MATCHED`), `MATCH (...)` partner jump chip, external links (`GMN CAMERAS ↗`, `GMN FLUX ↗`, `AMS VIEWER ↗`), and 3D measured start-to-end trajectory arrows.
 
+## 2026-10-17 — Stage 4 Historical Wind Sounding, 3-Model Dark Flight & Weighted Zone of Possibility Completed
+- Created `server/providers/meteors/sounding.js` (`/api/meteor-sounding`): queries Open-Meteo Historical Forecast / Reanalysis API (`10m` up to `30 hPa` / ~24 km in the stratosphere) for exact event-hour vertical wind profiles (`u, v`, geopotential height, temperature) with LRU caching and single-flight coalescing.
+- Created `src/layers/meteors/darkFlight.js`:
+  - **Hard Physics Limits:** `evaluateSurvivalPhysics` blocks ground-fall fabrication on high-altitude faint optical meteors (`>62 km` or `<5 g` above `50 km`) that completely ablate in the upper atmosphere.
+  - **3-Model Cross-Referenced Solver:** Simultaneously runs (1) Deterministic 5-mass RK4 spine (`10 kg`, `1 kg`, `100 g`, `10 g`, `1 g`), (2) 160-fragment seeded Monte Carlo ensemble + $1\sigma / 2\sigma$ covariance ellipses, and (3) Cross-model & confirmed-fall residual calibration (`crossModelOffsetM`, `aresResidualM`).
+  - **Weighted Directional Zone of Possibility:** For partial-data bolides missing 3D velocity vectors, marginalizes over entry azimuths weighted by the measured historical upper-air wind drift vector to render an inner wind-advected core + outer possibility envelope.
+- Added `⚡ DARK FLIGHT` toggle chip and `DF: ALL 3`, `DF: MASS SWEEP`, `DF: MONTE CARLO` mode chips in `controls.js` and 3D deceleration curves + ground ellipses in `rendering.js`.
+- Extended `src/layers/meteors/index.test.mjs` to 12 passing unit tests across 5 suites.
+
 ### Open Questions
 - How to handle CNEOS location uncertainty? (alt is often null)
 - Should we show all CNEOS events or filter by energy threshold?

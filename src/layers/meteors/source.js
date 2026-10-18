@@ -23,5 +23,25 @@ export function createSource({ layerState, services, components, config, feed })
     };
   }
 
-  return { fetchSnapshot };
+  async function fetchSounding({ lat, lon, timeIso }, signal) {
+    try {
+      const qs = new URLSearchParams({
+        lat: String(lat),
+        lon: String(lon),
+        time: String(timeIso || ''),
+      }).toString();
+      const response = await fetch(`/api/meteor-sounding?${qs}`, {
+        signal,
+        headers: { Accept: 'application/json' },
+      });
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch {
+      // Fallback handled by caller
+    }
+    return null;
+  }
+
+  return { fetchSnapshot, fetchSounding };
 }

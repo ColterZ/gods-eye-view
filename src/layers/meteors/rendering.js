@@ -104,12 +104,209 @@ export function createRendering({ layerState, services, components, config }) {
       layerState._renderedItems,
       layerState._selectedEventId,
     );
+    if (
+      layerState._darkFlightActive &&
+      layerState._darkFlightResult?.feasible &&
+      layerState._darkFlightResult.eventId === layerState._selectedEventId
+    ) {
+      const df = layerState._darkFlightResult;
+      const sweep = df.massSweep || [];
+      if (sweep.length > 0 && layerState._darkFlightMode !== 'montecarlo') {
+        const heavy = sweep[0];
+        const light = sweep[sweep.length - 1];
+        entries.push({
+          id: `meteor-df:heavy:${df.eventId}`,
+          position: Cesium.Cartesian3.fromDegrees(heavy.lon, heavy.lat, 0),
+          variant: 'card',
+          cardStyle: 'tactical',
+          collisionGroup: 'ambient-card',
+          title: `⚡ ${heavy.label} (${heavy.flightTimeSec}s fall)`,
+          details: [`Impact ${heavy.impactSpeedMs} m/s · MODEL ESTIMATE`],
+          accent: heavy.color,
+          selected: false,
+          protected: true,
+          priority: Number.MAX_SAFE_INTEGER - 10,
+          gapPx: 14,
+          verticalOnly: true,
+          horizonCull: true,
+          interactive: false,
+        });
+        if (light && light !== heavy) {
+          entries.push({
+            id: `meteor-df:light:${df.eventId}`,
+            position: Cesium.Cartesian3.fromDegrees(light.lon, light.lat, 0),
+            variant: 'card',
+            cardStyle: 'tactical',
+            collisionGroup: 'ambient-card',
+            title: `⚡ ${light.label} (${light.flightTimeSec}s wind drift)`,
+            details: [
+              df.regime === 'zone-of-possibility'
+                ? 'Wind-advected zone · MODEL ESTIMATE'
+                : `Along-track sorting ${df.calibration?.alongTrackKm ?? 0} km`,
+            ],
+            accent: light.color,
+            selected: false,
+            protected: true,
+            priority: Number.MAX_SAFE_INTEGER - 20,
+            gapPx: 14,
+            verticalOnly: true,
+            horizonCull: true,
+            interactive: false,
+          });
+        }
+      }
+    }
     overlayHost.setVisible?.(METEORS_OVERLAY_SOURCE_ID, true);
     overlayHost.setEntries?.(METEORS_OVERLAY_SOURCE_ID, entries, {
       cohortLimit: METEORS_OVERLAY_COHORT_LIMIT,
       collisionCapacity: METEORS_OVERLAY_COHORT_LIMIT,
       moving: false,
     });
+  }
+
+  function clearDarkFlight() {
+    if (
+      layerState._dataSource &&
+      Array.isArray(layerState._darkFlightEntities)
+    ) {
+      for (const ent of layerState._darkFlightEntities) {
+        layerState._dataSource.entities.remove(ent);
+      }
+    }
+    layerState._darkFlightEntities = [];
+  }
+
+  function renderDarkFlight() {
+    clearDarkFlight();
+    if (
+      !layerState._dataSource ||
+      !layerState._darkFlightActive ||
+      !layerState._darkFlightResult?.feasible
+    ) {
+      publishOverlayCards();
+      requestRender();
+      return;
+    }
+
+    const df = layerState._darkFlightResult;
+    const mode = layerState._darkFlightMode || 'all';
+    const isZone = df.regime === 'zone-of-possibility';
+
+    // 1. Render 2σ Outer Ellipse and 1σ Inner Core Ellipse (in 'all' or 'montecarlo' modes)
+    if (mode === 'all' || mode === 'montecarlo') {
+      const el2 = df.ellipse2Sigma;
+      if (el2 && el2.semiMajorM >= el2.semiMinorM) {
+        const outerColor = Cesium.Color.fromCssColorString(
+          isZone ? '#38bdf8' : '#f97316',
+        );
+        const ent2 = layerState._dataSource.entities.add({
+          id: `df:${df.eventId}:ellipse2`,
+          position: Cesium.Cartesian3.fromDegrees(
+            el2.center.lon,
+            el2.center.lat,
+            0,
+          ),
+          ellipse: {
+            semiMajorAxis: el2.semiMajorM,
+            semiMinorAxis: el2.semiMinorM,
+            rotation: Cesium.Math.toRadians(90 - el2.orientationDeg),
+            material: outerColor.withAlpha(isZone ? 0.14 : 0.18),
+            outline: true,
+            outlineColor: outerColor.withAlpha(0.75),
+            outlineWidth: 2,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          },
+        });
+        layerState._darkFlightEntities.push(ent2);
+      }
+
+      const el1 = df.ellipseInnerCore;
+      if (el1 && el1.semiMajorM >= el1.semiMinorM) {
+        const innerColor = Cesium.Color.fromCssColorString('#ffe19a');
+        const ent1 = layerState._dataSource.entities.add({
+          id: `df:${df.eventId}:ellipse1`,
+          position: Cesium.Cartesian3.fromDegrees(
+            el1.center.lon,
+            el1.center.lat,
+            0,
+          ),
+          ellipse: {
+            semiMajorAxis: el1.semiMajorM,
+            semiMinorAxis: el1.semiMinorM,
+            rotation: Cesium.Math.toRadians(90 - el1.orientationDeg),
+            material: innerColor.withAlpha(0.22),
+            outline: true,
+            outlineColor: innerColor.withAlpha(0.9),
+            outlineWidth: 2,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          },
+        });
+        layerState._darkFlightEntities.push(ent1);
+      }
+
+      // Monte Carlo ensemble impact cloud (capped at 100 points for crisp frame pacing)
+      const impacts = (df.monteCarloImpacts || []).slice(0, 100);
+      for (let i = 0; i < impacts.length; i++) {
+        const imp = impacts[i];
+        const ptColor =
+          imp.massKg >= 1
+            ? '#ef4444'
+            : imp.massKg >= 0.1
+              ? '#f97316'
+              : imp.massKg >= 0.01
+                ? '#eab308'
+                : '#fef08a';
+        const pEnt = layerState._dataSource.entities.add({
+          id: `df:${df.eventId}:mc:${i}`,
+          position: Cesium.Cartesian3.fromDegrees(imp.lon, imp.lat, 0),
+          point: {
+            pixelSize: imp.massKg >= 0.5 ? 5 : 3.5,
+            color: Cesium.Color.fromCssColorString(ptColor).withAlpha(0.75),
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+        });
+        layerState._darkFlightEntities.push(pEnt);
+      }
+    }
+
+    // 2. Render Deterministic 5-Mass Spine & 3D Deceleration Curves (in 'all' or 'sweep' modes)
+    if (mode === 'all' || mode === 'sweep') {
+      for (const band of df.massSweep || []) {
+        const bandColor = Cesium.Color.fromCssColorString(band.color);
+        if (Array.isArray(band.track) && band.track.length > 1) {
+          const positions = band.track.map((pt) =>
+            Cesium.Cartesian3.fromDegrees(pt.lon, pt.lat, pt.altM),
+          );
+          const trackEnt = layerState._dataSource.entities.add({
+            id: `df:${df.eventId}:track:${band.label}`,
+            polyline: {
+              positions,
+              width: 2.5,
+              material: bandColor.withAlpha(0.9),
+              arcType: Cesium.ArcType.NONE,
+            },
+          });
+          layerState._darkFlightEntities.push(trackEnt);
+        }
+        const impactEnt = layerState._dataSource.entities.add({
+          id: `df:${df.eventId}:mass:${band.label}`,
+          position: Cesium.Cartesian3.fromDegrees(band.lon, band.lat, 0),
+          point: {
+            pixelSize: 9,
+            color: bandColor,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+        });
+        layerState._darkFlightEntities.push(impactEnt);
+      }
+    }
+
+    publishOverlayCards();
+    requestRender();
   }
 
   function clearEntities() {
@@ -418,7 +615,9 @@ export function createRendering({ layerState, services, components, config }) {
     update,
     selectEvent,
     getFocusSphere,
-     publishOverlayCards,
+    publishOverlayCards,
+    renderDarkFlight,
+    clearDarkFlight,
     installClickHandler,
     removeClickHandler,
     clearEntities,

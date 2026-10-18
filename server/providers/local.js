@@ -30,6 +30,7 @@ import { windProxy } from './wind.js';
 import { cneosProxy } from './meteors/cneos.js';
 import { gmnProxy } from './meteors/gmn.js';
 import { asgardProxy } from './meteors/asgard.js';
+import { meteorSoundingProxy } from './meteors/sounding.js';
 
 /**
  * Construct the local provider plugins in their established order.
@@ -68,6 +69,7 @@ function localProviderPlugins({ realtime } = {}) {
     cneosProxy(),
     gmnProxy(),
     asgardProxy(),
+    meteorSoundingProxy(),
     keySetupEndpoint(),
   ];
 }

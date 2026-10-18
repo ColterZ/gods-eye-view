@@ -26,6 +26,7 @@ import {
   mapAnalystRecord,
 } from './model.js';
 import { formatShowerLabel } from './corroboration.js';
+import { runMultiModelDarkFlight } from './darkFlight.js';
 
 export function createControls({ layerState, services, components, config }) {
   const openLink =
@@ -41,6 +42,42 @@ export function createControls({ layerState, services, components, config }) {
       layerState._events.find((e) => e.id === layerState._selectedEventId) ||
       null
     );
+  }
+
+  async function executeDarkFlightForSelected() {
+    const ev = selectedEvent();
+    if (!ev || !layerState._darkFlightActive) {
+      layerState._darkFlightResult = null;
+      components.rendering.clearDarkFlight();
+      layerState.notify();
+      return;
+    }
+    const targetId = ev.id;
+    layerState._darkFlightLoading = true;
+    layerState.notify();
+    try {
+      const sounding = await components.source.fetchSounding({
+        lat: ev.location.lat,
+        lon: ev.location.lon,
+        timeIso: ev.eventTime,
+      });
+      if (
+        layerState._destroyed ||
+        !layerState._darkFlightActive ||
+        layerState._selectedEventId !== targetId
+      ) {
+        return;
+      }
+      layerState._darkFlightResult = runMultiModelDarkFlight(ev, sounding, {
+        allEvents: layerState._events,
+      });
+      components.rendering.renderDarkFlight();
+    } finally {
+      if (layerState._selectedEventId === targetId) {
+        layerState._darkFlightLoading = false;
+        layerState.notify();
+      }
+    }
   }
 
   function flyToEvent(eventId) {
@@ -141,7 +178,10 @@ export function createControls({ layerState, services, components, config }) {
 
       if (params.clear === true || params.eventId === null) {
         layerState._selectionIntent = 'cleared';
+        layerState._darkFlightActive = false;
+        layerState._darkFlightResult = null;
         ++layerState._navigationGeneration;
+        components.rendering.clearDarkFlight();
         components.rendering.selectEvent(null);
         changed = true;
       } else if (typeof params.eventId === 'string') {
@@ -152,7 +192,6 @@ export function createControls({ layerState, services, components, config }) {
           (e) => e.id === params.eventId,
         );
         if (!existsInFiltered && existsInAll) {
-          // If jumping to a corroborated partner from another source filter, widen filter to 'all'
           layerState._sourceFilter = 'all';
           const refMs = layerState._latestObservationTime
             ? Math.max(
@@ -173,8 +212,36 @@ export function createControls({ layerState, services, components, config }) {
         if (layerState._filteredEvents.some((e) => e.id === params.eventId)) {
           layerState._selectionIntent = 'user';
           components.rendering.selectEvent(params.eventId);
+          if (layerState._darkFlightActive) {
+            executeDarkFlightForSelected();
+          }
           changed = true;
         }
+      }
+
+      if (params.toggleDarkFlight === true) {
+        layerState._darkFlightActive = !layerState._darkFlightActive;
+        if (layerState._darkFlightActive) {
+          executeDarkFlightForSelected();
+        } else {
+          layerState._darkFlightResult = null;
+          components.rendering.clearDarkFlight();
+        }
+        changed = true;
+      }
+
+      if (
+        typeof params.darkFlightMode === 'string' &&
+        ['all', 'sweep', 'montecarlo'].includes(params.darkFlightMode)
+      ) {
+        layerState._darkFlightMode = params.darkFlightMode;
+        if (!layerState._darkFlightActive) {
+          layerState._darkFlightActive = true;
+          executeDarkFlightForSelected();
+        } else {
+          components.rendering.renderDarkFlight();
+        }
+        changed = true;
       }
 
       if (params.focus === true) {
@@ -247,6 +314,17 @@ export function createControls({ layerState, services, components, config }) {
       if (selected) {
         chips.push(
           {
+            id: 'toggle-dark-flight',
+            label: layerState._darkFlightLoading
+              ? '⚡ SIMULATING…'
+              : '⚡ DARK FLIGHT',
+            active: layerState._darkFlightActive,
+            busy: layerState._darkFlightLoading,
+            title:
+              'Run historical upper-air wind sounding + 3-model RK4/Monte Carlo dark-flight strewn field analysis',
+            params: { toggleDarkFlight: true },
+          },
+          {
             id: 'focus-selected',
             label: 'FOCUS',
             active: false,
@@ -261,6 +339,33 @@ export function createControls({ layerState, services, components, config }) {
             params: { openSource: true },
           },
         );
+        if (layerState._darkFlightActive) {
+          chips.push(
+            {
+              id: 'df-mode-all',
+              label: 'DF: ALL 3',
+              active: layerState._darkFlightMode === 'all',
+              title:
+                'Cross-reference deterministic 5-mass spine + 160-fragment Monte Carlo + 2σ footprint',
+              params: { darkFlightMode: 'all' },
+            },
+            {
+              id: 'df-mode-sweep',
+              label: 'DF: MASS SWEEP',
+              active: layerState._darkFlightMode === 'sweep',
+              title:
+                'Deterministic RK4 5-mass sorting spine (10 kg, 1 kg, 100 g, 10 g, 1 g)',
+              params: { darkFlightMode: 'sweep' },
+            },
+            {
+              id: 'df-mode-mc',
+              label: 'DF: MONTE CARLO',
+              active: layerState._darkFlightMode === 'montecarlo',
+              title: '160-fragment seeded Monte Carlo dispersion cloud + 2σ ellipse',
+              params: { darkFlightMode: 'montecarlo' },
+            },
+          );
+        }
         if (
           Array.isArray(selected.possibleMatches) &&
           selected.possibleMatches.length > 0
@@ -395,6 +500,37 @@ export function createControls({ layerState, services, components, config }) {
             : '3D Trajectory: Velocity vector components not reported for this event';
           const line4 = `Confidence: ${(selected.confidence?.level || 'high').toUpperCase()} · Delayed US Gov sensor catalog (not live) · Fireball report ≠ meteorite fall`;
           info = `${line1}\n${line2}\n${line3}\n${line4}${matchNote}`;
+        }
+
+        if (layerState._darkFlightActive) {
+          if (layerState._darkFlightLoading) {
+            info += `\n⚡ Dark Flight: Fetching historical upper-air wind sounding (10m–30hPa) and integrating RK4 + Monte Carlo models…`;
+          } else if (
+            layerState._darkFlightResult &&
+            layerState._darkFlightResult.eventId === selected.id
+          ) {
+            const df = layerState._darkFlightResult;
+            if (!df.feasible) {
+              info += `\n⚡ Dark Flight Gate: ${df.summaryText}`;
+            } else {
+              const snd = df.sounding?.summary || {};
+              const cal = df.calibration || {};
+              const el = df.ellipse2Sigma;
+              const sndLine = df.sounding
+                ? `⚡ Historical Wind Sounding (${df.sounding.soundingTimeUtc || 'ISA'}): Peak ${snd.peakWindSpeedMs ?? 0} m/s at ${snd.peakWindAltitudeKm ?? 0} km (→${snd.peakWindHeadingToDeg ?? 0}°) · Mean drift ${snd.meanDriftSpeedMs ?? 0} m/s →${snd.meanDriftHeadingToDeg ?? 0}°`
+                : '⚡ Historical Wind Sounding: Standard Atmosphere (0 m/s wind)';
+              const regimeLabel =
+                df.regime === 'zone-of-possibility'
+                  ? 'WEIGHTED ZONE OF POSSIBILITY (azimuth marginalized + wind prior)'
+                  : '3-MODEL CROSS-REFERENCED STREWN FIELD';
+              const elStr = el
+                ? `2σ footprint ${((el.semiMajorM * 2) / 1000).toFixed(1)}×${((el.semiMinorM * 2) / 1000).toFixed(1)} km (axis ${el.orientationDeg}°)`
+                : 'footprint n/a';
+              const dfLine2 = `⚡ Dark Flight [${regimeLabel}]: 10kg→1g sorting ${cal.alongTrackKm ?? 0} km · ${elStr}`;
+              const dfLine3 = `⚡ Cross-Reference: ${Number.isFinite(cal.crossModelOffsetM) ? `Spine↔MC centroid Δ=${cal.crossModelOffsetM} m` : cal.note}${Number.isFinite(cal.aresResidualM) ? ` · Confirmed fall (${cal.matchedFallName}) residual=${cal.aresResidualM} m` : ''} · MODEL ESTIMATE (not confirmed recovery zone)`;
+              info += `\n${sndLine}\n${dfLine2}\n${dfLine3}`;
+            }
+          }
         }
       } else {
         const latestObs = layerState._latestObservationTime
