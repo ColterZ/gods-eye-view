@@ -710,6 +710,55 @@ export function createRendering({ layerState, services, components, config }) {
       }
     }
 
+    // 2d. Render GOES GLM 14km-Ellipsoid Parallax Ghost & Correction Vector (when significant)
+    const goesDiag = df.validation?.goesDiag;
+    if (
+      goesDiag &&
+      goesDiag.parallaxShiftKm >= 5 &&
+      Number.isFinite(goesDiag.glmGhostLat) &&
+      Number.isFinite(goesDiag.glmGhostLon) &&
+      df.effectiveTerminus
+    ) {
+      const glmColor = Cesium.Color.fromCssColorString('#a855f7');
+      const ghostPos = Cesium.Cartesian3.fromDegrees(
+        goesDiag.glmGhostLon,
+        goesDiag.glmGhostLat,
+        goesDiag.glmEllipsoidKm * 1000,
+      );
+      const termPos = Cesium.Cartesian3.fromDegrees(
+        df.effectiveTerminus.lon,
+        df.effectiveTerminus.lat,
+        df.effectiveTerminus.altKm * 1000,
+      );
+      layerState._darkFlightEntities.push(
+        layerState._dataSource.entities.add({
+          id: `df:${df.eventId}:goes-glm-ghost`,
+          position: ghostPos,
+          point: {
+            pixelSize: 7,
+            color: glmColor.withAlpha(0.85),
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 1.5,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+        }),
+      );
+      layerState._darkFlightEntities.push(
+        layerState._dataSource.entities.add({
+          id: `df:${df.eventId}:goes-glm-parallax`,
+          polyline: {
+            positions: [ghostPos, termPos],
+            width: 1.8,
+            material: new Cesium.PolylineDashMaterialProperty({
+              color: glmColor.withAlpha(0.7),
+              dashLength: 12,
+            }),
+            arcType: Cesium.ArcType.NONE,
+          },
+        }),
+      );
+    }
+
     // 3. Render Found Stones & Mass-Matched Residual Error Vectors
     const stoneComparisons = df.stoneFit?.comparisons || [];
     for (const comp of stoneComparisons) {
@@ -855,7 +904,49 @@ export function createRendering({ layerState, services, components, config }) {
       layerState._pickEventIdByEntityId.set(tetherId, id);
     }
 
-    // 3. 3D Atmospheric Entry Trajectory Arrow (CNEOS vector, GMN optical, or ASGARD camera)
+    // 2b. For CNEOS events: render a 3D Airburst / Sensor Quantization Sphere (±5.5 km)
+    // plus a ground quantization footprint circle so CNEOS visually represents a
+    // satellite airburst fix with uncertainty rather than a camera line track.
+    let sphereEntity = null;
+    if (geom.cneosSphereRadiusM) {
+      const r = geom.cneosSphereRadiusM;
+      const sphereId = `${id}:cneos-sphere`;
+      sphereEntity = layerState._dataSource.entities.add({
+        id: sphereId,
+        position: geom.burstPosition,
+        ellipsoid: {
+          radii: new Cesium.Cartesian3(r, r, r),
+          material: pointColor.withAlpha(isSelected ? 0.18 : 0.1),
+          outline: true,
+          outlineColor: pointColor.withAlpha(isSelected ? 0.8 : 0.45),
+          outlineWidth: 1.5,
+          stackPartitions: 8,
+          slicePartitions: 12,
+        },
+      });
+      horizon.shapes.push(sphereEntity);
+      layerState._pickEventIdByEntityId.set(sphereId, id);
+
+      const groundRingId = `${id}:cneos-ground-ring`;
+      const groundRingEnt = layerState._dataSource.entities.add({
+        id: groundRingId,
+        position: geom.groundPosition,
+        ellipse: {
+          semiMajorAxis: 5500,
+          semiMinorAxis: 5500,
+          material: pointColor.withAlpha(isSelected ? 0.08 : 0.03),
+          outline: true,
+          outlineColor: pointColor.withAlpha(isSelected ? 0.65 : 0.3),
+          outlineWidth: 1,
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        },
+      });
+      horizon.shapes.push(groundRingEnt);
+      layerState._pickEventIdByEntityId.set(groundRingId, id);
+    }
+
+    // 3. 3D Atmospheric Entry Trajectory Arrow (precision track for GMN/ASGARD;
+    // short rough-directionality cone/stub on the sphere for CNEOS)
     let vectorEntity = null;
     if (geom.entryTrackPositions) {
       extent.push(...geom.entryTrackPositions);
@@ -873,13 +964,64 @@ export function createRendering({ layerState, services, components, config }) {
         id: vectorId,
         polyline: {
           positions: geom.entryTrackPositions,
-          width: isSelected ? 6 : 4,
+          width: geom.isRoughDirectionStub
+            ? isSelected
+              ? 4.5
+              : 3
+            : isSelected
+              ? 6
+              : 4,
           material: new Cesium.PolylineArrowMaterialProperty(vecColor),
           arcType: Cesium.ArcType.NONE,
         },
       });
       horizon.shapes.push(vectorEntity);
       layerState._pickEventIdByEntityId.set(vectorId, id);
+
+      // Add a ±18° rough-directionality cone ring + 4 cone ribs on CNEOS spheres
+      if (geom.isRoughDirectionStub && geom.entryTrackPositions.length >= 2) {
+        const stubStart = geom.entryTrackPositions[0];
+        const stubEnd = geom.entryTrackPositions[1];
+        const dirAxis = Cesium.Cartesian3.subtract(
+          stubEnd,
+          stubStart,
+          new Cesium.Cartesian3(),
+        );
+        const dirLen = Cesium.Cartesian3.magnitude(dirAxis);
+        if (dirLen > 100) {
+          Cesium.Cartesian3.normalize(dirAxis, dirAxis);
+          const { u, v } = buildOrthonormalBasis(dirAxis);
+          // Cone mouth at stubStart (incoming ±18° uncertainty fan)
+          const coneRadiusM = 5200;
+          const coneRing = makeCircleRing3D(stubStart, u, v, coneRadiusM, 12);
+          const coneMat = new Cesium.PolylineDashMaterialProperty({
+            color: vecColor.withAlpha(0.65),
+            dashLength: 8,
+          });
+          const ringEnt = layerState._dataSource.entities.add({
+            id: `${id}:cneos-dir-ring`,
+            polyline: {
+              positions: coneRing,
+              width: 1.4,
+              material: coneMat,
+              arcType: Cesium.ArcType.NONE,
+            },
+          });
+          horizon.shapes.push(ringEnt);
+          for (let k = 0; k < 12; k += 3) {
+            const ribEnt = layerState._dataSource.entities.add({
+              id: `${id}:cneos-dir-rib:${k}`,
+              polyline: {
+                positions: [coneRing[k], geom.burstPosition],
+                width: 1.2,
+                material: coneMat,
+                arcType: Cesium.ArcType.NONE,
+              },
+            });
+            horizon.shapes.push(ribEnt);
+          }
+        }
+      }
     }
 
     const focusSphere = Cesium.BoundingSphere.fromPoints(extent);

@@ -17,6 +17,216 @@ const METERS_PER_DEG_LAT = 111320;
 const TNT_TON_JOULES = 4.184e9;
 
 /**
+ * Representative network of NOAA WSR-88D NEXRAD Doppler Radar stations across
+ * North America for automatic radar-beam coverage & dark-flight gate calculation
+ * on any NASA ASGARD, ARES, GMN, or CNEOS event.
+ */
+export const CONUS_NEXRAD_STATIONS = Object.freeze([
+  { id: 'KOTX', name: 'Spokane, WA', lat: 47.6803, lon: -117.6267, elevM: 727 },
+  { id: 'KPDT', name: 'Pendleton, OR', lat: 45.6906, lon: -118.8528, elevM: 462 },
+  { id: 'KATX', name: 'Seattle/Tacoma, WA', lat: 48.1944, lon: -122.4958, elevM: 151 },
+  { id: 'KRTX', name: 'Portland, OR', lat: 45.715, lon: -122.9653, elevM: 479 },
+  { id: 'KMAX', name: 'Medford, OR', lat: 42.0811, lon: -122.7172, elevM: 2290 },
+  { id: 'KCBX', name: 'Boise, ID', lat: 43.4906, lon: -116.2356, elevM: 933 },
+  { id: 'KSFX', name: 'Pocatello, ID', lat: 43.1056, lon: -112.6861, elevM: 1364 },
+  { id: 'KMSX', name: 'Missoula, MT', lat: 47.0411, lon: -113.9864, elevM: 2394 },
+  { id: 'KTFX', name: 'Great Falls, MT', lat: 47.4597, lon: -111.3853, elevM: 1132 },
+  { id: 'KDAX', name: 'Sacramento, CA', lat: 38.5011, lon: -121.6778, elevM: 9 },
+  { id: 'KMUX', name: 'San Francisco, CA', lat: 37.1553, lon: -121.8983, elevM: 1057 },
+  { id: 'KVTX', name: 'Los Angeles, CA', lat: 34.4117, lon: -119.1794, elevM: 831 },
+  { id: 'KNKX', name: 'San Diego, CA', lat: 32.9189, lon: -117.0419, elevM: 291 },
+  { id: 'KIWA', name: 'Phoenix, AZ', lat: 33.2892, lon: -111.67, elevM: 412 },
+  { id: 'KFSX', name: 'Flagstaff, AZ', lat: 34.5744, lon: -111.1983, elevM: 2261 },
+  { id: 'KESX', name: 'Las Vegas, NV', lat: 35.7011, lon: -114.8919, elevM: 1483 },
+  { id: 'KMTX', name: 'Salt Lake City, UT', lat: 41.2628, lon: -112.4478, elevM: 1969 },
+  { id: 'KFTG', name: 'Denver, CO', lat: 39.7867, lon: -104.5458, elevM: 1675 },
+  { id: 'KABX', name: 'Albuquerque, NM', lat: 35.1497, lon: -106.8239, elevM: 1789 },
+  { id: 'KFWS', name: 'Dallas/Ft. Worth, TX', lat: 32.5731, lon: -97.3031, elevM: 208 },
+  { id: 'KHGX', name: 'Houston/Galveston, TX', lat: 29.4719, lon: -95.0792, elevM: 5 },
+  { id: 'KEWX', name: 'Austin/San Antonio, TX', lat: 29.7039, lon: -98.0286, elevM: 193 },
+  { id: 'KTLX', name: 'Oklahoma City, OK', lat: 35.3331, lon: -97.2778, elevM: 370 },
+  { id: 'KICT', name: 'Wichita, KS', lat: 37.6544, lon: -97.4428, elevM: 407 },
+  { id: 'KEAX', name: 'Kansas City, MO', lat: 38.8103, lon: -94.2644, elevM: 303 },
+  { id: 'KLSX', name: 'St. Louis, MO', lat: 38.6989, lon: -90.6828, elevM: 185 },
+  { id: 'KMPX', name: 'Minneapolis, MN', lat: 44.8489, lon: -93.5656, elevM: 288 },
+  { id: 'KLOT', name: 'Chicago, IL', lat: 41.6044, lon: -88.0847, elevM: 202 },
+  { id: 'KDTX', name: 'Detroit, MI', lat: 42.6997, lon: -83.4717, elevM: 327 },
+  { id: 'KAPX', name: 'Gaylord/N. Michigan, MI', lat: 44.9072, lon: -84.7197, elevM: 446 },
+  { id: 'KCLE', name: 'Cleveland, OH', lat: 41.4131, lon: -81.8597, elevM: 233 },
+  { id: 'KILN', name: 'Wilmington/Cincinnati, OH', lat: 39.4203, lon: -83.8217, elevM: 322 },
+  { id: 'KPBZ', name: 'Pittsburgh, PA', lat: 40.5317, lon: -80.2181, elevM: 361 },
+  { id: 'KDIX', name: 'Mt. Holly/Philadelphia, NJ', lat: 39.9469, lon: -74.4108, elevM: 45 },
+  { id: 'KOKX', name: 'New York City/Upton, NY', lat: 40.8656, lon: -72.8639, elevM: 26 },
+  { id: 'KBOX', name: 'Boston/Taunton, MA', lat: 41.9558, lon: -71.1369, elevM: 36 },
+  { id: 'KGYX', name: 'Portland/Gray, ME', lat: 43.8914, lon: -70.2564, elevM: 125 },
+  { id: 'KBUF', name: 'Buffalo, NY', lat: 42.9489, lon: -78.7369, elevM: 211 },
+  { id: 'KLWX', name: 'Sterling/Washington, VA', lat: 38.9753, lon: -77.4778, elevM: 83 },
+  { id: 'KRAX', name: 'Raleigh/Durham, NC', lat: 35.6656, lon: -78.49, elevM: 106 },
+  { id: 'KFFC', name: 'Atlanta/Peachtree City, GA', lat: 33.3636, lon: -84.5658, elevM: 262 },
+  { id: 'KBMX', name: 'Birmingham, AL', lat: 33.1722, lon: -86.7697, elevM: 197 },
+  { id: 'KDGX', name: 'Jackson/Brandon, MS', lat: 32.2797, lon: -89.9844, elevM: 149 },
+  { id: 'KLIX', name: 'New Orleans/Slidell, LA', lat: 30.3367, lon: -89.8256, elevM: 7 },
+  { id: 'KTBW', name: 'Tampa Bay, FL', lat: 27.7056, lon: -82.4017, elevM: 12 },
+  { id: 'KAMX', name: 'Miami, FL', lat: 25.6111, lon: -80.4128, elevM: 4 },
+]);
+
+/**
+ * Compute nearest NOAA WSR-88D NEXRAD Doppler radar coverage & beam heights
+ * using the 4/3-Earth effective radius refraction equation.
+ */
+export function computeNexradCoverage(lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const R_EFF_KM = 6371 * (4 / 3); // 8494.7 km effective 4/3-Earth radar refraction radius
+
+  const ranked = CONUS_NEXRAD_STATIONS.map((st) => {
+    const dLat = (lat - st.lat) * DEG_TO_RAD;
+    const dLon = (lon - st.lon) * DEG_TO_RAD;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(st.lat * DEG_TO_RAD) *
+        Math.cos(lat * DEG_TO_RAD) *
+        Math.sin(dLon / 2) ** 2;
+    const distKm = 2 * 6371 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    // Calculate WSR-88D beam center altitude (km MSL) at 0.5°, 1.5°, and 2.4° elevation tilts
+    const beamAltKm = (elevDeg) => {
+      const elRad = elevDeg * DEG_TO_RAD;
+      const hKm =
+        Math.sqrt(
+          distKm * distKm +
+            R_EFF_KM * R_EFF_KM +
+            2 * distKm * R_EFF_KM * Math.sin(elRad),
+        ) -
+        R_EFF_KM +
+        st.elevM / 1000;
+      return Math.round(hKm * 100) / 100;
+    };
+
+    const beamWidthKm =
+      Math.round(distKm * (0.95 * DEG_TO_RAD) * 100) / 100;
+
+    return {
+      ...st,
+      distanceKm: Math.round(distKm * 10) / 10,
+      tilt05AltKm: beamAltKm(0.5),
+      tilt15AltKm: beamAltKm(1.5),
+      tilt24AltKm: beamAltKm(2.4),
+      beamWidthKm,
+    };
+  }).sort((a, b) => a.distanceKm - b.distanceKm);
+
+  const primary = ranked[0];
+  if (!primary || primary.distanceKm > 460) return null;
+  return {
+    primary,
+    secondary: ranked[1] && ranked[1].distanceKm <= 460 ? ranked[1] : null,
+  };
+}
+
+/**
+ * Compute aerodynamic breakup physics (3D slant path, luminous flight duration,
+ * stagnation ram pressure P_dyn = rho * v^2 in MPa, Popova-Borovička strength class,
+ * and sonic boom ground horizon) for any trajectory-bearing event.
+ */
+export function computeAerodynamicBreakupPhysics(event, trajSource = event) {
+  const t = trajSource?.trajectory || {};
+  const endAltKm = Number.isFinite(t.endAltKm)
+    ? Number(t.endAltKm)
+    : Number.isFinite(trajSource?.location?.altitude) &&
+        trajSource.location.altitude > 0
+      ? Number(trajSource.location.altitude)
+      : null;
+  const startAltKm = Number.isFinite(t.startAltKm)
+    ? Number(t.startAltKm)
+    : endAltKm !== null
+      ? endAltKm + 32
+      : null;
+  const velKmS =
+    Number(t.entryVelocity) || Number(event?.trajectory?.entryVelocity) || null;
+
+  if (endAltKm === null) return null;
+
+  // Approximate US Standard Atmosphere density at endAltKm (kg/m³)
+  const scaleHeightKm = endAltKm > 45 ? 7.6 : endAltKm > 20 ? 6.5 : 8.4;
+  const rhoBreakupKgM3 = 1.225 * Math.exp(-endAltKm / scaleHeightKm);
+
+  // Dynamic ram pressure P_dyn = rho * v^2 (in MPa = 1e6 Pa)
+  // Account for ~20% deceleration from entry velocity to terminal breakup flare
+  const vBreakupMs = (velKmS || 15.0) * 1000 * 0.85;
+  const ramPressureMpa =
+    Math.round(((rhoBreakupKgM3 * vBreakupMs * vBreakupMs) / 1e6) * 1000) /
+    1000;
+
+  let strengthClass = 'Ordinary Chondrite (Stage I/II · 0.3–5.0 MPa)';
+  if (ramPressureMpa < 0.04) {
+    strengthClass = 'Cometary / Friable Aggregate (<0.04 MPa)';
+  } else if (ramPressureMpa < 0.3) {
+    strengthClass = 'Weak Carbonaceous / Fractured Chondrite (0.04–0.30 MPa)';
+  } else if (ramPressureMpa > 5.0) {
+    strengthClass = 'Cohesive / Monolithic or Iron-Rich (>5.0 MPa)';
+  }
+
+  // 3D slant distance & luminous flight duration
+  const groundTrackKm = Number(t.groundTrackDistance) || 35;
+  const dzKm = Math.max(0, (startAltKm ?? endAltKm + 30) - endAltKm);
+  const slantLengthKm =
+    Math.round(Math.hypot(groundTrackKm, dzKm) * 10) / 10;
+  const luminousDurationSec =
+    velKmS && velKmS > 0
+      ? Math.round((slantLengthKm / velKmS) * 10) / 10
+      : null;
+
+  // Sonic boom / infrasound ground carpet & acoustic travel delay (c_avg ~ 310 m/s)
+  const sonicBoomCarpetRadiusKm = Math.round(endAltKm * 2.4 * 10) / 10;
+  const sonicBoomDelaySec = Math.round((endAltKm * 1000) / 310);
+
+  return {
+    startAltKm: startAltKm ? Math.round(startAltKm * 10) / 10 : null,
+    endAltKm: Math.round(endAltKm * 10) / 10,
+    slantLengthKm,
+    luminousDurationSec,
+    rhoBreakupKgM3: Number(rhoBreakupKgM3.toExponential(2)),
+    ramPressureMpa,
+    strengthClass,
+    sonicBoomCarpetRadiusKm,
+    sonicBoomDelaySec,
+  };
+}
+
+/**
+ * Compute CNEOS-specific satellite sensor diagnostics (3D airburst sphere radius,
+ * rough directionality cone ±18°, and internal scalar vs ECEF vector speed check).
+ */
+export function computeCneosSensorDiagnostics(event) {
+  if (!event || event.source !== 'cneos') return null;
+  const impactKt = Number(event.energy?.impact) || 0.1;
+  // Base 5,500m radius (±0.05° CNEOS coordinate quantization) scaled gently with yield
+  const sphereRadiusM = Math.round(
+    Math.min(11000, Math.max(5200, 5200 + Math.log10(Math.max(0.05, impactKt) * 20) * 1400)),
+  );
+  const t = event.trajectory || {};
+  const scalarVel = Number(event.raw?.vel ?? t.entryVelocity);
+  const vecVel =
+    Number.isFinite(t.vx) && Number.isFinite(t.vy) && Number.isFinite(t.vz)
+      ? Math.round(Math.hypot(t.vx, t.vy, t.vz) * 10) / 10
+      : null;
+  const velMismatchKmS =
+    Number.isFinite(scalarVel) && Number.isFinite(vecVel)
+      ? Math.round(Math.abs(vecVel - scalarVel) * 10) / 10
+      : 0;
+
+  return {
+    sphereRadiusM,
+    quantizationMarginKm: 5.5,
+    directionalitySpreadDeg: 18,
+    scalarVelKmS: Number.isFinite(scalarVel) ? scalarVel : null,
+    vectorVelKmS: vecVel,
+    velMismatchKmS,
+    hasVelocityConflict: velMismatchKmS > 2.5,
+  };
+}
+
+/**
  * Documented NOAA NEXRAD Doppler radar dark-flight gates & multi-sensor metadata
  * for radar-confirmed meteorite falls.
  */
@@ -157,9 +367,13 @@ export function computeGoesSatelliteDiagnostics(
     ? nexrad.acousticEnergyTonsTnt / 1000
     : Number(event?.energy?.impact) || 0.01;
   const energyTonsTnt = energyKt * 1000;
+  const isStereoZone = lon >= -136 && lon <= -72 && lat >= 15 && lat <= 58;
 
   return {
     satellite: satName,
+    stereoCoverage: isStereoZone
+      ? 'Dual-Satellite Stereo (GOES-18 West 137°W + GOES-16 East 75.2°W)'
+      : `Single-Satellite (${satName})`,
     burstAltKm: Math.round(burstAltKm * 10) / 10,
     glmEllipsoidKm,
     parallaxShiftKm,
@@ -170,8 +384,10 @@ export function computeGoesSatelliteDiagnostics(
       energyTonsTnt >= 1
         ? `ABI Band 7 (3.9µm SWIR, 2km px): Stratospheric thermal debris plume detectable for ~45–120s post-breakup (${energyTonsTnt.toFixed(0)}t TNT)`
         : 'ABI Band 7 (3.9µm SWIR): Sub-threshold thermal plume (<1t TNT)',
+    abiBand8WaterVapor:
+      'ABI Bands 8–10 (6.2/6.9/7.3µm WV): Tracks upper-tropospheric jet shear & tropopause folding',
     abiBand13Lwir:
-      'ABI Band 13 (10.3µm Clean IR): Constrains cloud-top height for camera sightline validation & GLM parallax correction',
+      'ABI Band 13/15 (10.3–12.3µm Split-Window IR): Silicate micron-dust plume BTD & cloud-top height validation',
   };
 }
 
@@ -295,10 +511,17 @@ export function evaluateEventSanityAndOverUnder(
   const gmnRec = partners.find((p) => p.source === 'gmn') || null;
   const aresRec = partners.find((p) => p.source === 'ares') || null;
   const nexrad = getNexradGateForEvent(event);
+  const trajPartner = asgardRec || gmnRec || event;
+  const nexradCoverage = computeNexradCoverage(
+    trajPartner?.location?.lat ?? event.location?.lat,
+    trajPartner?.location?.lon ?? event.location?.lon,
+  );
+  const aeroPhysics = computeAerodynamicBreakupPhysics(event, trajPartner);
+  const cneosDiag = computeCneosSensorDiagnostics(cneosRec || event);
   const stones = dfResult?.foundStones || [];
   const goesDiag = computeGoesSatelliteDiagnostics(
     cneosRec || event,
-    asgardRec || gmnRec || event,
+    trajPartner,
     nexrad,
   );
   const pathCones = computeFlightPathUncertaintyCones(event, allEvents);
@@ -524,11 +747,20 @@ export function evaluateEventSanityAndOverUnder(
     };
   }
 
+  if (cneosDiag?.hasVelocityConflict) {
+    sanityWarnings.push(
+      `CNEOS Internal Velocity Conflict: CNEOS reports scalar speed ${cneosDiag.scalarVelKmS} km/s but ECEF vector components (vx,vy,vz) have magnitude ${cneosDiag.vectorVelKmS} km/s (Δ=${cneosDiag.velMismatchKmS} km/s). Treated as rough directionality (±${cneosDiag.directionalitySpreadDeg}°) on a ±${cneosDiag.quantizationMarginKm} km airburst sphere.`,
+    );
+  }
+
   return {
     opticalEntryMassKg,
     acousticEntryMassKg,
     energyTonsTnt,
+    aeroPhysics,
+    cneosDiag,
     nexrad,
+    nexradCoverage,
     radarCheck,
     goesDiag,
     pathCones,

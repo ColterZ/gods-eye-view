@@ -7,9 +7,17 @@ import {
   SEVERITY_COLORS,
 } from './policy.js';
 import { formatShowerLabel } from './corroboration.js';
+import {
+  computeAerodynamicBreakupPhysics,
+  computeNexradCoverage,
+  computeGoesSatelliteDiagnostics,
+  computeCneosSensorDiagnostics,
+  getNexradGateForEvent,
+} from './validation.js';
 
 const DAY_MS = 86_400_000;
-const ENTRY_TRACK_LENGTH_M = 110_000; // 110 km visible atmospheric entry track
+const CNEOS_ROUGH_STUB_IN_M = 16_000; // 16 km incoming rough-directionality stub on CNEOS sphere
+const CNEOS_ROUGH_STUB_OUT_M = 6_500; // 6.5 km outgoing cone tip on CNEOS sphere
 
 export function resolveTimeWindow(windowId) {
   return (
@@ -161,7 +169,15 @@ export function computeEventGeometry(event, cesium = Cesium) {
       : cesium.Cartesian3.fromDegrees(lon, lat, 100);
 
   let entryTrackPositions = null;
+  let isRoughDirectionStub = false;
+  let cneosSphereRadiusM = null;
   const t = event?.trajectory;
+  const isCneos = (event?.source || 'cneos') === 'cneos';
+
+  if (isCneos) {
+    const cDiag = computeCneosSensorDiagnostics(event);
+    cneosSphereRadiusM = cDiag?.sphereRadiusM ?? 5500;
+  }
 
   if (hasMeasuredEndpoints(event)) {
     const startAltM =
@@ -194,11 +210,17 @@ export function computeEventGeometry(event, cesium = Cesium) {
           ? burstPosition
           : cesium.Cartesian3.fromDegrees(lon, lat, 32_000);
       const entryStart = new cesium.Cartesian3(
-        anchor.x - (vx / speed) * ENTRY_TRACK_LENGTH_M,
-        anchor.y - (vy / speed) * ENTRY_TRACK_LENGTH_M,
-        anchor.z - (vz / speed) * ENTRY_TRACK_LENGTH_M,
+        anchor.x - (vx / speed) * CNEOS_ROUGH_STUB_IN_M,
+        anchor.y - (vy / speed) * CNEOS_ROUGH_STUB_IN_M,
+        anchor.z - (vz / speed) * CNEOS_ROUGH_STUB_IN_M,
       );
-      entryTrackPositions = [entryStart, anchor];
+      const entryEnd = new cesium.Cartesian3(
+        anchor.x + (vx / speed) * CNEOS_ROUGH_STUB_OUT_M,
+        anchor.y + (vy / speed) * CNEOS_ROUGH_STUB_OUT_M,
+        anchor.z + (vz / speed) * CNEOS_ROUGH_STUB_OUT_M,
+      );
+      entryTrackPositions = [entryStart, entryEnd];
+      isRoughDirectionStub = true;
     }
   }
 
@@ -208,6 +230,8 @@ export function computeEventGeometry(event, cesium = Cesium) {
     cullPosition,
     hasAltitude: altKm !== null && altKm > 0,
     entryTrackPositions,
+    isRoughDirectionStub,
+    cneosSphereRadiusM,
   };
 }
 
@@ -350,15 +374,39 @@ export function buildMeteorCardModel(event, selected = false) {
       ? `Track ${t.groundTrackDistance} km`
       : '';
     if (selected) {
-      const details = [
-        `${coordsStr} · ${altSpan} · ${velStr}${trackStr ? ` · ${trackStr}` : ''}`,
-      ];
-      if (matchLine) details.push(matchLine);
-      details.push(
-        'NASA MSFC ASGARD All-Sky Network · Report ≠ meteorite fall',
+      const aero = computeAerodynamicBreakupPhysics(event, event);
+      const nexCov = computeNexradCoverage(
+        event.location?.lat,
+        event.location?.lon,
       );
+      const nexGate = getNexradGateForEvent(event);
+      const goes = computeGoesSatelliteDiagnostics(event, event, nexGate);
+      const details = [
+        `${coordsStr} · ${altSpan} · ${velStr}${trackStr ? ` · ${trackStr}` : ''} · Az ${t.azimuth ?? 'n/a'}°`,
+      ];
+      if (aero) {
+        details.push(
+          `Breakup P_dyn ${aero.ramPressureMpa} MPa (${aero.strengthClass}) · Boom carpet ±${aero.sonicBoomCarpetRadiusKm} km (+${aero.sonicBoomDelaySec}s)`,
+        );
+      }
+      if (nexGate) {
+        details.push(
+          `📡 NEXRAD Gate: ${nexGate.station} @ ${nexGate.gateAltitudeKm} km (Δt +${nexGate.elapsedSec}s · ${nexGate.reflectivityDbz} dBZ)`,
+        );
+      } else if (nexCov?.primary) {
+        const p = nexCov.primary;
+        details.push(
+          `📡 Nearest NEXRAD: ${p.id} (${p.name}, ${p.distanceKm} km) · 0.5°–2.4° beams @ ${p.tilt05AltKm}–${p.tilt24AltKm} km`,
+        );
+      }
+      if (goes) {
+        details.push(
+          `🛰 ${goes.stereoCoverage} · GLM parallax ${goes.parallaxShiftKm} km →${goes.parallaxBearingDeg}° · ${goes.abiBand7Swir.split(':')[0]}`,
+        );
+      }
+      if (matchLine) details.push(matchLine);
       return {
-        title: `☄ ASGARD SKYFALL · ${utcStr}`,
+        title: `☄ ASGARD 3D CAMERA SKYFALL · ${utcStr}`,
         details,
         accent: SEVERITY_COLORS.selected,
         selected: true,
@@ -379,10 +427,25 @@ export function buildMeteorCardModel(event, selected = false) {
   if (src === 'ares') {
     const fallName = event?.name || event?.id;
     if (selected) {
+      const nexGate = getNexradGateForEvent(event);
+      const nexCov = computeNexradCoverage(
+        event.location?.lat,
+        event.location?.lon,
+      );
       const details = [
         `${coordsStr} · Documented fall date ${dateOnly}`,
         event?.description || 'NASA ARES radar-confirmed meteorite fall',
       ];
+      if (nexGate) {
+        details.push(
+          `📡 NEXRAD Gate: ${nexGate.station} · ${nexGate.gateTimeUtc.slice(11, 19)} UTC @ ${nexGate.gateAltitudeKm} km (Δt +${nexGate.elapsedSec}s · ${nexGate.reflectivityDbz} dBZ)`,
+        );
+      } else if (nexCov?.primary) {
+        const p = nexCov.primary;
+        details.push(
+          `📡 WSR-88D Radar: ${p.id} (${p.name}, ${p.distanceKm} km) · Beams ${p.tilt05AltKm}–${p.tilt24AltKm} km`,
+        );
+      }
       if (matchLine) details.push(matchLine);
       return {
         title: `◆ METEORITE FALL · ${fallName}`,
@@ -401,28 +464,38 @@ export function buildMeteorCardModel(event, selected = false) {
     };
   }
 
-  // Default: NASA/JPL CNEOS
+  // Default: NASA/JPL CNEOS (3D Airburst Sphere + Rough Directionality)
   const impactStr = formatEnergyKt(event?.energy?.impact);
   const radiatedStr = formatRadiatedJ(event?.energy?.radiated);
+  const cDiag = computeCneosSensorDiagnostics(event);
 
   if (selected) {
-    const details = [`${coordsStr} · ${altStr} · ${velStr}`];
+    const tonsTnt = Number.isFinite(event?.energy?.impact)
+      ? `${Math.round(event.energy.impact * 1000)}t TNT`
+      : '';
+    const details = [
+      `${coordsStr} (±5.5 km 0.1° sphere) · ${altStr} · ${velStr}${cDiag?.hasVelocityConflict ? ` (|v|=${cDiag.vectorVelKmS} km/s)` : ''}`,
+    ];
     if (hasVelocityVector(event)) {
       const { vx, vy, vz, entryAngle, azimuth } = event.trajectory;
       const anglePart =
         entryAngle !== null && azimuth !== null
-          ? `Entry ${entryAngle}° elev · Az ${azimuth}°`
+          ? `Rough Dir Az ${azimuth}° (±18°) · Elev ${entryAngle}°`
           : `ECEF (${vx}, ${vy}, ${vz}) km/s`;
-      details.push(`Radiated ${radiatedStr} · ${anglePart}`);
+      details.push(
+        `Radiated ${radiatedStr}${tonsTnt ? ` (${tonsTnt})` : ''} · ${anglePart}`,
+      );
     } else {
-      details.push(`Radiated ${radiatedStr} · 3D vector unavailable`);
+      details.push(
+        `Radiated ${radiatedStr}${tonsTnt ? ` (${tonsTnt})` : ''} · 3D vector unavailable`,
+      );
     }
     if (matchLine) details.push(matchLine);
     details.push(
-      'NASA/JPL CNEOS (delayed sensor catalog) · Report ≠ meteorite fall',
+      'NASA/JPL CNEOS US Gov Sensor Sphere (single-point peak fix · rough directionality)',
     );
     return {
-      title: `☄ FIREBALL · ${impactStr} TNT · ${utcStr}`,
+      title: `☄ CNEOS AIRBURST SPHERE · ${impactStr} TNT · ${utcStr}`,
       details,
       accent: SEVERITY_COLORS.selected,
       selected: true,

@@ -32,6 +32,13 @@ import {
   setCustomFoundStones,
 } from './foundStones.js';
 import {
+  computeAerodynamicBreakupPhysics,
+  computeNexradCoverage,
+  computeGoesSatelliteDiagnostics,
+  computeCneosSensorDiagnostics,
+  getNexradGateForEvent,
+} from './validation.js';
+import {
   buildMeteorEventSceneRecipe,
   registerMeteorScenesInDirector,
 } from './sceneGenerator.js';
@@ -596,24 +603,69 @@ export function createControls({ layerState, services, components, config }) {
           info = `${line1}\n${line2}\n${line3}\n${line4}${matchNote}`;
         } else if (src === 'asgard') {
           const t = selected.trajectory || {};
-          const line1 = `Selected [NASA ASGARD]: ${formatUtcTimestamp(selected.eventTime)} · Speed ${Number.isFinite(vel) ? `${vel.toFixed(1)} km/s` : 'n/a'} · Ground track ${t.groundTrackDistance ?? 'n/a'} km`;
-          const line2 = `3D Camera Path: ${formatLatLon(t.startLat, t.startLon)} (${t.startAltKm ?? 85} km) → ${formatLatLon(t.endLat, t.endLon)} (${t.endAltKm ?? 48} km) · Heading ${t.azimuth ?? 'n/a'}°`;
-          const line3 = `Attribution: NASA MSFC Meteoroid Environment Office / ASGARD · Delayed camera catalog · Report ≠ meteorite fall`;
-          info = `${line1}\n${line2}\n${line3}${matchNote}`;
+          const aero = computeAerodynamicBreakupPhysics(selected, selected);
+          const nexGate = getNexradGateForEvent(selected);
+          const nexCov = computeNexradCoverage(
+            selected.location?.lat,
+            selected.location?.lon,
+          );
+          const goes = computeGoesSatelliteDiagnostics(
+            selected,
+            selected,
+            nexGate,
+          );
+          const line1 = `Selected [NASA ASGARD 3D Camera Skyfall]: ${formatUtcTimestamp(selected.eventTime)} · Speed ${Number.isFinite(vel) ? `${vel.toFixed(1)} km/s` : 'n/a'} · Ground track ${t.groundTrackDistance ?? 'n/a'} km${aero?.slantLengthKm ? ` (3D slant ${aero.slantLengthKm} km · ~${aero.luminousDurationSec ?? 'n/a'}s luminous flight)` : ''}`;
+          const line2 = `3D Camera Path: ${formatLatLon(t.startLat, t.startLon)} (${t.startAltKm ?? 85} km) → ${formatLatLon(t.endLat, t.endLon)} (${t.endAltKm ?? 48} km) · Heading ${t.azimuth ?? 'n/a'}° · Elev ${t.entryAngle ?? 'n/a'}°`;
+          const line3 = aero
+            ? `Aerodynamic Breakup: Peak ram pressure P_dyn = ${aero.ramPressureMpa} MPa at ${aero.endAltKm} km (ρ=${aero.rhoBreakupKgM3} kg/m³) → ${aero.strengthClass} · Sonic boom carpet ±${aero.sonicBoomCarpetRadiusKm} km (surface arrival +${aero.sonicBoomDelaySec}s)`
+            : `Attribution: NASA MSFC Meteoroid Environment Office / ASGARD`;
+          const line4 = nexGate
+            ? `📡 NOAA NEXRAD Gate: ${nexGate.station} · ${nexGate.gateTimeUtc.slice(11, 19)} UTC @ ${nexGate.gateAltitudeKm} km (Δt +${nexGate.elapsedSec}s post-bolide · ${nexGate.reflectivityDbz} dBZ)`
+            : nexCov?.primary
+              ? `📡 Nearest NOAA NEXRAD: ${nexCov.primary.id} (${nexCov.primary.name}, ${nexCov.primary.distanceKm} km · 0.95° beam width ${nexCov.primary.beamWidthKm} km) · Base tilts 0.5°=${nexCov.primary.tilt05AltKm} km, 1.5°=${nexCov.primary.tilt15AltKm} km, 2.4°=${nexCov.primary.tilt24AltKm} km MSL`
+              : `📡 NOAA NEXRAD: Outside primary CONUS WSR-88D 460 km dark-flight range`;
+          const line5 = goes
+            ? `🛰 ${goes.stereoCoverage}: GLM 14km-ellipsoid parallax shift ${goes.parallaxShiftKm} km →${goes.parallaxBearingDeg}° · ${goes.abiBand7Swir} · ${goes.abiBand13Lwir}`
+            : '';
+          info = `${line1}\n${line2}\n${line3}\n${line4}${line5 ? `\n${line5}` : ''}${matchNote}`;
         } else if (src === 'ares') {
+          const nexGate = getNexradGateForEvent(selected);
+          const nexCov = computeNexradCoverage(
+            selected.location?.lat,
+            selected.location?.lon,
+          );
+          const goes = computeGoesSatelliteDiagnostics(
+            selected,
+            selected,
+            nexGate,
+          );
           const line1 = `Selected [NASA ARES Confirmed Fall]: ${selected.name} · Date ${selected.eventTime?.slice(0, 10)} · ${formatLatLon(selected.location?.lat, selected.location?.lon)}`;
           const line2 = `Details: ${selected.description}`;
-          const line3 = `Source: NASA ARES Astromaterials Research & Exploration Science (NOAA NEXRAD / GOES GLM corroborated)`;
-          info = `${line1}\n${line2}\n${line3}${matchNote}`;
+          const line3 = nexGate
+            ? `📡 NOAA NEXRAD Gate: ${nexGate.station} · ${nexGate.gateTimeUtc.slice(11, 19)} UTC @ ${nexGate.gateAltitudeKm} km (Δt +${nexGate.elapsedSec}s · ${nexGate.reflectivityDbz} dBZ)`
+            : nexCov?.primary
+              ? `📡 Nearest WSR-88D Radar: ${nexCov.primary.id} (${nexCov.primary.name}, ${nexCov.primary.distanceKm} km) · 0.5°–2.4° beams @ ${nexCov.primary.tilt05AltKm}–${nexCov.primary.tilt24AltKm} km MSL`
+              : `Source: NASA ARES Astromaterials Research & Exploration Science`;
+          const line4 = goes
+            ? `🛰 ${goes.stereoCoverage} · ${goes.abiBand7Swir} · ${goes.abiBand8WaterVapor}`
+            : '';
+          info = `${line1}\n${line2}\n${line3}${line4 ? `\n${line4}` : ''}${matchNote}`;
         } else {
           const { vx, vy, vz, entryAngle, azimuth, radiantAzimuth } =
             selected.trajectory || {};
-          const line1 = `Selected [CNEOS]: ${formatUtcTimestamp(selected.eventTime)} · Impact ${formatEnergyKt(selected.energy?.impact)} TNT · Radiated ${formatRadiatedJ(selected.energy?.radiated)}`;
-          const line2 = `Location: ${formatLatLon(selected.location?.lat, selected.location?.lon)} · Peak alt ${Number.isFinite(alt) ? `${alt.toFixed(1)} km` : 'n/a'} · Pre-impact vel ${Number.isFinite(vel) ? `${vel.toFixed(1)} km/s` : 'n/a'}`;
+          const cDiag = computeCneosSensorDiagnostics(selected);
+          const tonsTnt = Number.isFinite(selected.energy?.impact)
+            ? `${Math.round(selected.energy.impact * 1000)}t TNT`
+            : 'n/a';
+          const line1 = `Selected [CNEOS Airburst Sphere]: ${formatUtcTimestamp(selected.eventTime)} · Impact ${formatEnergyKt(selected.energy?.impact)} (${tonsTnt}) · Radiated ${formatRadiatedJ(selected.energy?.radiated)}`;
+          const line2 = `3D Airburst Sphere: ${formatLatLon(selected.location?.lat, selected.location?.lon)} (±${cDiag?.quantizationMarginKm ?? 5.5} km 0.1° sensor quantization sphere, radius ${((cDiag?.sphereRadiusM ?? 5500) / 1000).toFixed(1)} km) · Peak alt ${Number.isFinite(alt) ? `${alt.toFixed(1)} km` : 'n/a'}`;
+          const velCheckStr = cDiag?.hasVelocityConflict
+            ? ` [⚠ Scalar vel=${cDiag.scalarVelKmS} km/s vs ECEF |v|=${cDiag.vectorVelKmS} km/s]`
+            : '';
           const line3 = hasVelocityVector(selected)
-            ? `3D Trajectory: Entry ${entryAngle}° above horizon · Heading ${azimuth}° (radiant ${radiantAzimuth}°) · ECEF (${vx}, ${vy}, ${vz}) km/s`
-            : '3D Trajectory: Velocity vector components not reported for this event';
-          const line4 = `Confidence: ${(selected.confidence?.level || 'high').toUpperCase()} · Delayed US Gov sensor catalog (not live) · Fireball report ≠ meteorite fall`;
+            ? `Rough Directionality Cone: Heading ${azimuth}° ±${cDiag?.directionalitySpreadDeg ?? 18}° (radiant ${radiantAzimuth}° · elev ${entryAngle}°) · ECEF (${vx}, ${vy}, ${vz}) km/s${velCheckStr}`
+            : 'Rough Directionality: Velocity vector components not reported for this event';
+          const line4 = `Confidence: ${(selected.confidence?.level || 'high').toUpperCase()} · Single-point US Gov satellite fix (rendered as 3D sphere + rough direction stub, not a camera track)`;
           info = `${line1}\n${line2}\n${line3}\n${line4}${matchNote}`;
         }
 
