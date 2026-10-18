@@ -495,7 +495,7 @@ export function buildMeteorCardModel(event, selected = false) {
       'NASA/JPL CNEOS US Gov Sensor Sphere (single-point peak fix · rough directionality)',
     );
     return {
-      title: `☄ CNEOS AIRBURST SPHERE · ${impactStr} TNT · ${utcStr}`,
+      title: `☄ FIREBALL (CNEOS SPHERE) · ${impactStr} TNT · ${utcStr}`,
       details,
       accent: SEVERITY_COLORS.selected,
       selected: true,
