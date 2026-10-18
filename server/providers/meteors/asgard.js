@@ -13,12 +13,12 @@ const HOUR = 3600_000;
 export const NASA_ARES_METEORITE_FALLS = Object.freeze([
   {
     id: 'ares:sims-corner-wa',
-    name: 'Sims Corner, WA',
-    lat: 47.8155,
-    lon: -119.3625,
+    name: 'Sims Corner, WA (Hwy 17 / Malone Ranch)',
+    lat: 47.8665,
+    lon: -119.3665,
     date: '2026-08-14',
     description:
-      'Confirmed meteorite fall in Douglas County, WA detected on GOES East/West GLM and NOAA NEXRAD radar.',
+      'Low-mass meteorite fall along WA-17 near Sims Corner & Malone Ranch (07:50:41 UTC radar gate at 10.29 km; largest pieces ~46.6g–80g recovered by Anton & Roberto).',
   },
   {
     id: 'ares:cockburn-island-on',

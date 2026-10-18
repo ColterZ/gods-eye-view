@@ -560,7 +560,7 @@ export function createControls({ layerState, services, components, config }) {
               const elStr = el
                 ? `2σ footprint ${((el.semiMajorM * 2) / 1000).toFixed(1)}×${((el.semiMinorM * 2) / 1000).toFixed(1)} km (axis ${el.orientationDeg}°)`
                 : 'footprint n/a';
-              const dfLine2 = `⚡ Dark Flight [${regimeLabel}]: 10kg→1g sorting ${cal.alongTrackKm ?? 0} km · ${elStr}`;
+              const dfLine2 = `⚡ Dark Flight [${regimeLabel}]: 1kg→3g sorting ${cal.alongTrackKm ?? 0} km · ${elStr}`;
               const dfLine3 = `⚡ Cross-Reference: ${Number.isFinite(cal.crossModelOffsetM) ? `Spine↔MC centroid Δ=${cal.crossModelOffsetM} m` : cal.note}${Number.isFinite(cal.aresResidualM) ? ` · Confirmed fall (${cal.matchedFallName}) residual=${cal.aresResidualM} m` : ''} · MODEL ESTIMATE (not confirmed recovery zone)`;
               info += `\n${sndLine}\n${dfLine2}\n${dfLine3}`;
               if (

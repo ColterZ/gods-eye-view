@@ -777,7 +777,7 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     });
     assert.equal(fullResult.feasible, true);
     assert.equal(fullResult.regime, 'full-3d-strewn-field');
-    assert.equal(fullResult.massSweep.length, 5);
+    assert.equal(fullResult.massSweep.length, 7);
     assert.equal(fullResult.monteCarloImpacts.length, 80);
     assert.ok(fullResult.ellipse2Sigma.semiMajorM > 0);
     assert.ok(Number.isFinite(fullResult.calibration.crossModelOffsetM));
@@ -796,7 +796,7 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     });
     assert.equal(zoneResult.feasible, true);
     assert.equal(zoneResult.regime, 'zone-of-possibility');
-    assert.equal(zoneResult.massSweep.length, 5);
+    assert.equal(zoneResult.massSweep.length, 7);
     assert.ok(zoneResult.ellipse2Sigma.semiMajorM > 0);
     assert.ok(zoneResult.ellipseInnerCore.semiMajorM > 0);
   });
@@ -818,13 +818,13 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     };
 
     const stones = getFoundStonesForEvent(simsEvent);
-    assert.equal(stones.length, 3);
+    assert.equal(stones.length, 4);
 
     const baselineDf = runMultiModelDarkFlight(simsEvent, sampleSounding, {
       nFragments: 40,
       autoFit: false,
     });
-    assert.equal(baselineDf.stoneFit.comparisons.length, 3);
+    assert.equal(baselineDf.stoneFit.comparisons.length, 4);
     assert.ok(Number.isFinite(baselineDf.stoneFit.baselineRmsM));
 
     const fittedDf = runMultiModelDarkFlight(simsEvent, sampleSounding, {

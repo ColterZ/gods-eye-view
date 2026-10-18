@@ -38,11 +38,13 @@ const RAD_TO_DEG = 180 / Math.PI;
 const METERS_PER_DEG_LAT = 111320;
 
 export const CANONICAL_MASS_SWEEP = Object.freeze([
-  Object.freeze({ massKg: 10, label: '10 kg', color: '#ef4444' }),
-  Object.freeze({ massKg: 1, label: '1 kg', color: '#f97316' }),
-  Object.freeze({ massKg: 0.1, label: '100 g', color: '#f59e0b' }),
-  Object.freeze({ massKg: 0.01, label: '10 g', color: '#eab308' }),
-  Object.freeze({ massKg: 0.001, label: '1 g', color: '#fef08a' }),
+  Object.freeze({ massKg: 1.0, label: '1 kg', color: '#ef4444' }),
+  Object.freeze({ massKg: 0.3, label: '300g', color: '#f97316' }),
+  Object.freeze({ massKg: 0.1, label: '100g', color: '#f59e0b' }),
+  Object.freeze({ massKg: 0.05, label: '50g', color: '#eab308' }),
+  Object.freeze({ massKg: 0.03, label: '30g', color: '#84cc16' }),
+  Object.freeze({ massKg: 0.01, label: '10g', color: '#22c55e' }),
+  Object.freeze({ massKg: 0.003, label: '3g', color: '#fef08a' }),
 ]);
 
 export function atmosphereTemperature(altitudeM) {
@@ -231,6 +233,9 @@ export function integrateFragmentDarkFlight({
   terminalLat,
   terminalLon,
   terminalAltM,
+  anchorLat = null,
+  anchorLon = null,
+  anchorAltM = null,
   terminalSpeedMs,
   azimuthDeg,
   entryAngleDeg,
@@ -242,10 +247,13 @@ export function integrateFragmentDarkFlight({
 }) {
   const azRad = azimuthDeg * DEG_TO_RAD;
   const elevRad = Math.max(5, Math.min(89, entryAngleDeg)) * DEG_TO_RAD;
-  // At dark-flight transition, luminous velocity has decelerated to ~2.5-3.5 km/s
+  // At dark-flight transition (~22-28 km), luminous velocity has decelerated to ~0.8-2.5 km/s
   const startSpeed = Math.min(Math.max(terminalSpeedMs, 200), 3200);
   const vHoriz = startSpeed * Math.cos(elevRad);
 
+  // If the camera terminus (anchorAltM, e.g. 45.5 km) is above the dark-flight fragmentation
+  // altitude (terminalAltM, e.g. 25 km), start the 3D visual polyline at the exact camera
+  // terminus vertex and transition smoothly into the dark-flight fragmentation state.
   const state = {
     lat: terminalLat * DEG_TO_RAD,
     lon: terminalLon * DEG_TO_RAD,
@@ -259,15 +267,26 @@ export function integrateFragmentDarkFlight({
   const diameter = 2 * Math.cbrt((3 * volume) / (4 * Math.PI));
   const area = Math.PI * (diameter / 2) ** 2 * shapeFactor;
 
-  const track = recordTrack
-    ? [
-        {
-          lat: terminalLat,
-          lon: terminalLon,
-          altM: state.alt,
-        },
-      ]
-    : null;
+  const track = recordTrack ? [] : null;
+  if (track) {
+    if (
+      Number.isFinite(anchorLat) &&
+      Number.isFinite(anchorLon) &&
+      Number.isFinite(anchorAltM) &&
+      anchorAltM > state.alt + 500
+    ) {
+      track.push({
+        lat: anchorLat,
+        lon: anchorLon,
+        altM: anchorAltM,
+      });
+    }
+    track.push({
+      lat: terminalLat,
+      lon: terminalLon,
+      altM: state.alt,
+    });
+  }
 
   function derivAt(s) {
     const atm = getAtmosphere(s.alt);
@@ -646,29 +665,53 @@ export function runMultiModelDarkFlight(
 
   // Check for documented or user-supplied Found Stones for this fall (or corroborated partners)
   const foundStones = getFoundStonesForEvent(event);
+  const anchorLat = lat;
+  const anchorLon = lon;
+  const anchorAltM = terminalAltM;
+
+  // Fragmentation / dark-flight transition occurs around 24-28 km altitude
+  let effectiveLat = lat;
+  let effectiveLon = lon;
+  let effectiveAltM = Math.min(25000, terminalAltM);
   let activeSounding = sounding;
-  const effectiveAltM = terminalAltM;
-  let effectiveSpeedMs = terminalSpeedMs;
+  let effectiveSpeedMs = 1350;
   let effectiveAzimuthDeg = azimuthDeg;
   let effectiveShapeFactor = 1.15;
   let stoneFit = null;
 
   if (foundStones.length > 0) {
+    // Compute stone centroid to anchor cross-track radar/field alignment when autoFit is enabled
+    const stoneMeanLat =
+      foundStones.reduce((s, st) => s + st.lat, 0) / foundStones.length;
+    const stoneMeanLon =
+      foundStones.reduce((s, st) => s + st.lon, 0) / foundStones.length;
+
     if (autoFit) {
+      // Back-project 25km fragmentation release point upwind/uptrack from the stone centroid
+      const azRad = ((azimuthDeg + 180) % 360) * DEG_TO_RAD;
+      const backDistDeg = 0.055; // ~6 km uptrack
+      const candidateLat = stoneMeanLat + Math.cos(azRad) * backDistDeg;
+      const candidateLon =
+        stoneMeanLon +
+        (Math.sin(azRad) * backDistDeg) /
+          Math.max(0.01, Math.cos(stoneMeanLat * DEG_TO_RAD));
+
       stoneFit = autoFitDarkFlightToFoundStones({
         stones: foundStones,
-        terminalLat: lat,
-        terminalLon: lon,
-        terminalAltM,
-        terminalSpeedMs,
+        terminalLat: candidateLat,
+        terminalLon: candidateLon,
+        terminalAltM: effectiveAltM,
+        terminalSpeedMs: effectiveSpeedMs,
         azimuthDeg,
         entryAngleDeg,
         sounding,
       });
       if (stoneFit?.tuning) {
+        effectiveLat = candidateLat;
+        effectiveLon = candidateLon;
         activeSounding = scaleSoundingWind(sounding, stoneFit.tuning.windScale);
         effectiveSpeedMs =
-          terminalSpeedMs * (stoneFit.tuning.speedScale || 1.0);
+          effectiveSpeedMs * (stoneFit.tuning.speedScale || 1.0);
         effectiveAzimuthDeg =
           (azimuthDeg + stoneFit.tuning.azimuthDeltaDeg + 360) % 360;
         effectiveShapeFactor = stoneFit.tuning.shapeFactor;
@@ -676,10 +719,10 @@ export function runMultiModelDarkFlight(
     } else {
       const baseEval = evaluateFoundStoneResiduals({
         stones: foundStones,
-        terminalLat: lat,
-        terminalLon: lon,
-        terminalAltM,
-        terminalSpeedMs,
+        terminalLat: effectiveLat,
+        terminalLon: effectiveLon,
+        terminalAltM: effectiveAltM,
+        terminalSpeedMs: effectiveSpeedMs,
         azimuthDeg,
         entryAngleDeg,
         sounding,
@@ -696,9 +739,12 @@ export function runMultiModelDarkFlight(
   // REGIME B: Full 3-Model Strewn Field (Deterministic Spine + Monte Carlo + Cross-Calibration)
   const massSweep = CANONICAL_MASS_SWEEP.map((band) => {
     const res = integrateFragmentDarkFlight({
-      terminalLat: lat,
-      terminalLon: lon,
+      terminalLat: effectiveLat,
+      terminalLon: effectiveLon,
       terminalAltM: effectiveAltM,
+      anchorLat,
+      anchorLon,
+      anchorAltM,
       terminalSpeedMs: effectiveSpeedMs,
       azimuthDeg: effectiveAzimuthDeg,
       entryAngleDeg,
@@ -716,10 +762,10 @@ export function runMultiModelDarkFlight(
   for (let i = 0; i < nFragments; i++) {
     const rng = new SeededRng(fragmentSeed(seedBase, i));
     const u = Math.min(0.999, rng.next());
-    const massKg = Math.min(10, Math.max(0.001, 0.001 * Math.pow(1 - u, -1.2)));
+    const massKg = Math.min(1, Math.max(0.002, 0.002 * Math.pow(1 - u, -1.1)));
     const imp = integrateFragmentDarkFlight({
-      terminalLat: lat + rng.gaussian() * 0.004,
-      terminalLon: lon + rng.gaussian() * 0.004,
+      terminalLat: effectiveLat + rng.gaussian() * 0.0025,
+      terminalLon: effectiveLon + rng.gaussian() * 0.0025,
       terminalAltM: effectiveAltM + rng.gaussian() * 250,
       terminalSpeedMs: effectiveSpeedMs * (1 + rng.gaussian() * 0.06),
       azimuthDeg: effectiveAzimuthDeg + rng.gaussian() * 2.2,
