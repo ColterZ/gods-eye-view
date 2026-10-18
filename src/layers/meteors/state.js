@@ -42,6 +42,8 @@ export function createMeteorsState({ services, config }) {
   layerState._darkFlightLoading = false;
   layerState._darkFlightResult = null;
   layerState._darkFlightEntities = [];
+  layerState._sceneDirector = null;
+  layerState._syncedScenesCount = 0;
 
   layerState.notify = () => {
     layerState._listener?.();

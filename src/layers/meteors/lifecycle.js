@@ -1,6 +1,7 @@
 import * as Cesium from 'cesium';
 import { METEORS_OVERLAY_SOURCE_ID } from './policy.js';
 import { filterEventsByWindow } from './model.js';
+import { registerMeteorScenesInDirector } from './sceneGenerator.js';
 
 export function createLifecycle({ layerState, services, components, config }) {
   const { registerPickOwner, unregisterPickOwner } = services.picking;
@@ -157,6 +158,26 @@ export function createLifecycle({ layerState, services, components, config }) {
         components.rendering.update(layerState._filteredEvents);
         if (layerState._selectedEventId) {
           components.rendering.selectEvent(layerState._selectedEventId);
+        }
+        if (
+          layerState._sceneDirector &&
+          layerState._syncedScenesCount === 0 &&
+          layerState._events.length > 0
+        ) {
+          const prioritySkyfalls = layerState._events
+            .filter(
+              (e) =>
+                e.source === 'ares' ||
+                (Array.isArray(e.possibleMatches) &&
+                  e.possibleMatches.length > 0),
+            )
+            .slice(0, 12);
+          const reg = registerMeteorScenesInDirector(
+            layerState._sceneDirector,
+            prioritySkyfalls,
+            layerState._events,
+          );
+          layerState._syncedScenesCount = reg.length;
         }
         return true;
       } catch (error) {

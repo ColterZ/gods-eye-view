@@ -31,6 +31,10 @@ import {
   getFoundStonesForEvent,
   setCustomFoundStones,
 } from './foundStones.js';
+import {
+  buildMeteorEventSceneRecipe,
+  registerMeteorScenesInDirector,
+} from './sceneGenerator.js';
 
 export function createControls({ layerState, services, components, config }) {
   const openLink =
@@ -233,12 +237,70 @@ export function createControls({ layerState, services, components, config }) {
           components.rendering.clearDarkFlight();
         }
         changed = true;
+      } else if (typeof params.darkFlight === 'boolean') {
+        if (layerState._darkFlightActive !== params.darkFlight) {
+          layerState._darkFlightActive = params.darkFlight;
+          if (layerState._darkFlightActive) {
+            executeDarkFlightForSelected();
+          } else {
+            layerState._darkFlightResult = null;
+            components.rendering.clearDarkFlight();
+          }
+          changed = true;
+        }
       }
 
       if (params.toggleAutoFit === true) {
         layerState._darkFlightAutoFit = !layerState._darkFlightAutoFit;
         layerState._darkFlightActive = true;
         executeDarkFlightForSelected();
+        changed = true;
+      } else if (typeof params.autoFit === 'boolean') {
+        if (layerState._darkFlightAutoFit !== params.autoFit) {
+          layerState._darkFlightAutoFit = params.autoFit;
+          if (layerState._darkFlightActive) {
+            executeDarkFlightForSelected();
+          }
+          changed = true;
+        }
+      }
+
+      if (params.playEventScene === true) {
+        const sel = selectedEvent();
+        if (sel && layerState._sceneDirector) {
+          const scenes = registerMeteorScenesInDirector(
+            layerState._sceneDirector,
+            [sel],
+            layerState._events,
+            { selectFirst: true },
+          );
+          if (scenes[0]) {
+            layerState._sceneDirector.startScene?.(scenes[0].id, {
+              single: true,
+              preview: false,
+            });
+          }
+          changed = true;
+        }
+      }
+
+      if (params.syncSkyfallScenes === true && layerState._sceneDirector) {
+        const candidates = layerState._filteredEvents
+          .filter(
+            (e) =>
+              e.source === 'ares' ||
+              e.source === 'asgard' ||
+              (Array.isArray(e.possibleMatches) &&
+                e.possibleMatches.length > 0),
+          )
+          .slice(0, 18);
+        const registered = registerMeteorScenesInDirector(
+          layerState._sceneDirector,
+          candidates,
+          layerState._events,
+          { selectFirst: true },
+        );
+        layerState._syncedScenesCount = registered.length;
         changed = true;
       }
 
@@ -347,6 +409,14 @@ export function createControls({ layerState, services, components, config }) {
             params: { toggleDarkFlight: true },
           },
           {
+            id: 'play-event-scene',
+            label: '🎬 PLAY SCENE',
+            active: false,
+            title:
+              'Auto-generate a 4-shot cinematic Scene in SceneDirector for this event and play it',
+            params: { playEventScene: true },
+          },
+          {
             id: 'focus-selected',
             label: 'FOCUS',
             active: false,
@@ -422,6 +492,17 @@ export function createControls({ layerState, services, components, config }) {
         });
       } else {
         chips.push(
+          {
+            id: 'sync-skyfall-scenes',
+            label:
+              layerState._syncedScenesCount > 0
+                ? `🎬 SCENES (${layerState._syncedScenesCount})`
+                : '🎬 BUILD SKYFALL SCENES',
+            active: layerState._syncedScenesCount > 0,
+            title:
+              'Automatically generate 4-shot cinematic scenes in the SCENES panel for every skyfall & confirmed fall',
+            params: { syncSkyfallScenes: true },
+          },
           {
             id: 'gmn-status-link',
             label: 'GMN CAMERAS ↗',
@@ -643,6 +724,26 @@ export function createControls({ layerState, services, components, config }) {
 
     setRowControlsListener(fn) {
       layerState._listener = typeof fn === 'function' ? fn : null;
+    },
+
+    attachSceneController(sceneDirector) {
+      layerState._sceneDirector = sceneDirector || null;
+      if (layerState._sceneDirector && layerState._events.length > 0) {
+        const prioritySkyfalls = layerState._events
+          .filter(
+            (e) =>
+              e.source === 'ares' ||
+              (Array.isArray(e.possibleMatches) &&
+                e.possibleMatches.length > 0),
+          )
+          .slice(0, 12);
+        const reg = registerMeteorScenesInDirector(
+          layerState._sceneDirector,
+          prioritySkyfalls,
+          layerState._events,
+        );
+        layerState._syncedScenesCount = reg.length;
+      }
     },
 
     getStats() {

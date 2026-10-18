@@ -30,6 +30,11 @@ import {
   setCustomFoundStones,
 } from './foundStones.js';
 import {
+  cameraPoseLookingAtTarget,
+  buildMeteorEventSceneRecipe,
+  registerMeteorScenesInDirector,
+} from './sceneGenerator.js';
+import {
   filterEventsByWindow,
   severityTier,
   buildMeteorCardModel,
@@ -842,5 +847,44 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     ]);
     assert.equal(custom.length, 1);
     assert.equal(getFoundStonesForEvent({ id: 'custom:event' }).length, 1);
+  });
+
+  it('(14) buildMeteorEventSceneRecipe and registerMeteorScenesInDirector auto-generate 4-shot cinematic scenes for skyfall events', () => {
+    const pose = cameraPoseLookingAtTarget({
+      targetLat: 47.87,
+      targetLon: -119.37,
+      targetAltM: 0,
+      cameraAltM: 10000,
+      headingDeg: 0,
+      pitchDeg: -45,
+    });
+    // Looking due North (0°) at pitch -45° from 10km altitude places camera 10km South of target
+    assert.ok(pose.lat < 47.87);
+    assert.equal(pose.lon, -119.37);
+
+    const aresFalls = buildAresFallEvents(1792200000000);
+    const sims = aresFalls.find((f) => f.id === 'ares:sims-corner-wa');
+    const recipe = buildMeteorEventSceneRecipe(sims, aresFalls);
+    assert.ok(recipe);
+    assert.equal(recipe.cameraPath.length, 4);
+    assert.match(recipe.cameraPath[3].title, /Found Stone Map/);
+
+    const mockDirector = {
+      _project: { scenes: [] },
+      _selectedSceneId: null,
+      _selectedShotId: null,
+      _saveProject() {},
+      _renderSceneSelect() {},
+      _renderShotList() {},
+    };
+    const registered = registerMeteorScenesInDirector(
+      mockDirector,
+      aresFalls.slice(0, 3),
+      aresFalls,
+      { selectFirst: true },
+    );
+    assert.equal(registered.length, 3);
+    assert.equal(mockDirector._project.scenes.length, 3);
+    assert.equal(mockDirector._project.scenes[0].shots.length, 4);
   });
 });
