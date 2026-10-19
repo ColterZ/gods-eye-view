@@ -233,8 +233,8 @@ export function collectEventVisualPoints(event, allEvents = []) {
 
   const df = runMultiModelDarkFlight(event, null, {
     allEvents,
-    nFragments: 36,
-    autoFit: true,
+    nFragments: 16,
+    autoFit: false,
   });
 
   if (df?.feasible) {

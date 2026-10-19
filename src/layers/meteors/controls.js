@@ -59,7 +59,7 @@ export function createControls({ layerState, services, components, config }) {
     );
   }
 
-  async function executeDarkFlightForSelected() {
+  async function executeDarkFlightForSelected({ fly = false } = {}) {
     const ev = selectedEvent();
     if (!ev || !layerState._darkFlightActive) {
       layerState._darkFlightResult = null;
@@ -69,6 +69,19 @@ export function createControls({ layerState, services, components, config }) {
     }
     const targetId = ev.id;
     layerState._darkFlightLoading = true;
+    // Render an immediate synchronous Dark-Flight pass so visuals appear instantly
+    // while the historical upper-air wind sounding resolves in the background.
+    if (
+      !layerState._darkFlightResult ||
+      layerState._darkFlightResult.eventId !== targetId
+    ) {
+      layerState._darkFlightResult = runMultiModelDarkFlight(ev, null, {
+        allEvents: layerState._events,
+        autoFit: false,
+      });
+      components.rendering.renderDarkFlight();
+      if (fly) flyToEvent(targetId);
+    }
     layerState.notify();
     try {
       const sounding = await components.source.fetchSounding({
@@ -88,6 +101,7 @@ export function createControls({ layerState, services, components, config }) {
         autoFit: layerState._darkFlightAutoFit,
       });
       components.rendering.renderDarkFlight();
+      if (fly) flyToEvent(targetId);
     } finally {
       if (layerState._selectedEventId === targetId) {
         layerState._darkFlightLoading = false;
@@ -232,13 +246,18 @@ export function createControls({ layerState, services, components, config }) {
             executeDarkFlightForSelected();
           }
           changed = true;
+        } else if (layerState._events.length === 0) {
+          // Preserve requested eventId while initial catalog snapshot is still loading
+          layerState._selectedEventId = params.eventId;
+          layerState._selectionIntent = 'user';
+          changed = true;
         }
       }
 
       if (params.toggleDarkFlight === true) {
         layerState._darkFlightActive = !layerState._darkFlightActive;
         if (layerState._darkFlightActive) {
-          executeDarkFlightForSelected();
+          executeDarkFlightForSelected({ fly: true });
         } else {
           layerState._darkFlightResult = null;
           components.rendering.clearDarkFlight();
@@ -248,11 +267,18 @@ export function createControls({ layerState, services, components, config }) {
         if (layerState._darkFlightActive !== params.darkFlight) {
           layerState._darkFlightActive = params.darkFlight;
           if (layerState._darkFlightActive) {
-            executeDarkFlightForSelected();
+            executeDarkFlightForSelected({ fly: false });
           } else {
             layerState._darkFlightResult = null;
             components.rendering.clearDarkFlight();
           }
+          changed = true;
+        } else if (
+          params.darkFlight === true &&
+          layerState._selectedEventId &&
+          layerState._darkFlightResult?.eventId !== layerState._selectedEventId
+        ) {
+          executeDarkFlightForSelected({ fly: false });
           changed = true;
         }
       }

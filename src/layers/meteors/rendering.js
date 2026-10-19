@@ -45,6 +45,34 @@ function makeCircleRing3D(center, u, v, radiusM, segments = 16) {
   return pts;
 }
 
+function makeGroundEllipsePositions(
+  centerLat,
+  centerLon,
+  semiMajorM,
+  semiMinorM,
+  orientationDeg = 0,
+  segments = 36,
+) {
+  const degToRad = Math.PI / 180;
+  const metersPerDegLat = 111320;
+  const cosLat = Math.max(0.05, Math.cos(centerLat * degToRad));
+  const rotRad = (90 - (Number(orientationDeg) || 0)) * degToRad;
+  const cosR = Math.cos(rotRad);
+  const sinR = Math.sin(rotRad);
+  const positions = [];
+  for (let i = 0; i <= segments; i++) {
+    const theta = (i / segments) * Math.PI * 2;
+    const xLocal = semiMajorM * Math.cos(theta);
+    const yLocal = semiMinorM * Math.sin(theta);
+    const eastM = xLocal * cosR - yLocal * sinR;
+    const northM = xLocal * sinR + yLocal * cosR;
+    const lat = centerLat + northM / metersPerDegLat;
+    const lon = centerLon + eastM / (metersPerDegLat * cosLat);
+    positions.push(Cesium.Cartesian3.fromDegrees(lon, lat, 0));
+  }
+  return positions;
+}
+
 export function createRendering({ layerState, services, components, config }) {
   const overlayHost = config.overlayHost;
   const registerEntityContext =
@@ -297,56 +325,76 @@ export function createRendering({ layerState, services, components, config }) {
     const mode = layerState._darkFlightMode || 'all';
     const isZone = df.regime === 'zone-of-possibility';
 
-    // 1. Render 2σ Outer Ellipse and 1σ Inner Core Ellipse (in 'all' or 'montecarlo' modes)
+    // 1. Render 2σ Outer Ellipse and 1σ Inner Core Ellipse (draped onto 3D Tiles & terrain)
     if (mode === 'all' || mode === 'montecarlo') {
       const el2 = df.ellipse2Sigma;
       if (el2 && el2.semiMajorM >= el2.semiMinorM) {
         const outerColor = Cesium.Color.fromCssColorString(
           isZone ? '#38bdf8' : '#f97316',
         );
-        const ent2 = layerState._dataSource.entities.add({
-          id: `df:${df.eventId}:ellipse2`,
-          position: Cesium.Cartesian3.fromDegrees(
-            el2.center.lon,
-            el2.center.lat,
-            0,
-          ),
-          ellipse: {
-            semiMajorAxis: el2.semiMajorM,
-            semiMinorAxis: el2.semiMinorM,
-            rotation: Cesium.Math.toRadians(90 - el2.orientationDeg),
-            material: outerColor.withAlpha(isZone ? 0.14 : 0.18),
-            outline: true,
-            outlineColor: outerColor.withAlpha(0.75),
-            outlineWidth: 2,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-          },
-        });
-        layerState._darkFlightEntities.push(ent2);
+        const ring2 = makeGroundEllipsePositions(
+          el2.center.lat,
+          el2.center.lon,
+          el2.semiMajorM,
+          el2.semiMinorM,
+          el2.orientationDeg,
+          40,
+        );
+        layerState._darkFlightEntities.push(
+          layerState._dataSource.entities.add({
+            id: `df:${df.eventId}:ellipse2`,
+            polygon: {
+              hierarchy: new Cesium.PolygonHierarchy(ring2.slice(0, -1)),
+              classificationType: Cesium.ClassificationType.BOTH,
+              material: outerColor.withAlpha(isZone ? 0.14 : 0.16),
+              arcType: Cesium.ArcType.GEODESIC,
+            },
+          }),
+          layerState._dataSource.entities.add({
+            id: `df:${df.eventId}:ellipse2:outline`,
+            polyline: {
+              positions: ring2,
+              width: 2.2,
+              material: outerColor.withAlpha(0.85),
+              clampToGround: true,
+              classificationType: Cesium.ClassificationType.BOTH,
+            },
+          }),
+        );
       }
 
       const el1 = df.ellipseInnerCore;
       if (el1 && el1.semiMajorM >= el1.semiMinorM) {
         const innerColor = Cesium.Color.fromCssColorString('#ffe19a');
-        const ent1 = layerState._dataSource.entities.add({
-          id: `df:${df.eventId}:ellipse1`,
-          position: Cesium.Cartesian3.fromDegrees(
-            el1.center.lon,
-            el1.center.lat,
-            0,
-          ),
-          ellipse: {
-            semiMajorAxis: el1.semiMajorM,
-            semiMinorAxis: el1.semiMinorM,
-            rotation: Cesium.Math.toRadians(90 - el1.orientationDeg),
-            material: innerColor.withAlpha(0.22),
-            outline: true,
-            outlineColor: innerColor.withAlpha(0.9),
-            outlineWidth: 2,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-          },
-        });
-        layerState._darkFlightEntities.push(ent1);
+        const ring1 = makeGroundEllipsePositions(
+          el1.center.lat,
+          el1.center.lon,
+          el1.semiMajorM,
+          el1.semiMinorM,
+          el1.orientationDeg,
+          36,
+        );
+        layerState._darkFlightEntities.push(
+          layerState._dataSource.entities.add({
+            id: `df:${df.eventId}:ellipse1`,
+            polygon: {
+              hierarchy: new Cesium.PolygonHierarchy(ring1.slice(0, -1)),
+              classificationType: Cesium.ClassificationType.BOTH,
+              material: innerColor.withAlpha(0.18),
+              arcType: Cesium.ArcType.GEODESIC,
+            },
+          }),
+          layerState._dataSource.entities.add({
+            id: `df:${df.eventId}:ellipse1:outline`,
+            polyline: {
+              positions: ring1,
+              width: 2.0,
+              material: innerColor.withAlpha(0.9),
+              clampToGround: true,
+              classificationType: Cesium.ClassificationType.BOTH,
+            },
+          }),
+        );
       }
 
       // Monte Carlo ensemble impact cloud (capped at 100 points for crisp frame pacing)
@@ -434,25 +482,31 @@ export function createRendering({ layerState, services, components, config }) {
               ]),
               width: 1.8,
               material: new Cesium.PolylineDashMaterialProperty({
-                color: bandColor.withAlpha(0.75),
+                color: bandColor.withAlpha(0.8),
                 dashLength: 8,
               }),
               clampToGround: true,
+              classificationType: Cesium.ClassificationType.BOTH,
             },
           });
           layerState._darkFlightEntities.push(errBarEnt);
 
+          const marginRing = makeGroundEllipsePositions(
+            band.lat,
+            band.lon,
+            band.marginRadiusM,
+            Math.max(150, Math.round(band.marginRadiusM * 0.65)),
+            0,
+            24,
+          );
           const marginEnt = layerState._dataSource.entities.add({
             id: `df:${df.eventId}:margin:${band.label}`,
-            position: Cesium.Cartesian3.fromDegrees(band.lon, band.lat, 0),
-            ellipse: {
-              semiMajorAxis: band.marginRadiusM,
-              semiMinorAxis: Math.max(150, Math.round(band.marginRadiusM * 0.65)),
-              material: bandColor.withAlpha(0.08),
-              outline: true,
-              outlineColor: bandColor.withAlpha(0.55),
-              outlineWidth: 1,
-              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            polyline: {
+              positions: marginRing,
+              width: 1.2,
+              material: bandColor.withAlpha(0.55),
+              clampToGround: true,
+              classificationType: Cesium.ClassificationType.BOTH,
             },
           });
           layerState._darkFlightEntities.push(marginEnt);
@@ -500,9 +554,10 @@ export function createRendering({ layerState, services, components, config }) {
           id: `df:${df.eventId}:spine-center`,
           polyline: {
             positions: spinePositions,
-            width: 2.2,
-            material: Cesium.Color.fromCssColorString('#fde047').withAlpha(0.8),
+            width: 2.5,
+            material: Cesium.Color.fromCssColorString('#fde047').withAlpha(0.85),
             clampToGround: true,
+            classificationType: Cesium.ClassificationType.BOTH,
           },
         });
         layerState._darkFlightEntities.push(spineLine);
@@ -512,12 +567,13 @@ export function createRendering({ layerState, services, components, config }) {
           id: `df:${df.eventId}:spine-under`,
           polyline: {
             positions: underRailPositions,
-            width: 1.6,
+            width: 1.8,
             material: new Cesium.PolylineDashMaterialProperty({
-              color: Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.7),
+              color: Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.8),
               dashLength: 10,
             }),
             clampToGround: true,
+            classificationType: Cesium.ClassificationType.BOTH,
           },
         });
         layerState._darkFlightEntities.push(underRail);
@@ -527,12 +583,13 @@ export function createRendering({ layerState, services, components, config }) {
           id: `df:${df.eventId}:spine-over`,
           polyline: {
             positions: overRailPositions,
-            width: 1.6,
+            width: 1.8,
             material: new Cesium.PolylineDashMaterialProperty({
-              color: Cesium.Color.fromCssColorString('#fb7185').withAlpha(0.7),
+              color: Cesium.Color.fromCssColorString('#fb7185').withAlpha(0.8),
               dashLength: 10,
             }),
             clampToGround: true,
+            classificationType: Cesium.ClassificationType.BOTH,
           },
         });
         layerState._darkFlightEntities.push(overRail);
@@ -714,6 +771,7 @@ export function createRendering({ layerState, services, components, config }) {
             width: 2.5,
             material: radarColor.withAlpha(0.9),
             clampToGround: true,
+            classificationType: Cesium.ClassificationType.BOTH,
           },
         }),
       );
@@ -878,6 +936,7 @@ export function createRendering({ layerState, services, components, config }) {
               dashLength: 10,
             }),
             clampToGround: true,
+            classificationType: Cesium.ClassificationType.BOTH,
           },
         });
         layerState._darkFlightEntities.push(resLine);
@@ -1038,17 +1097,22 @@ export function createRendering({ layerState, services, components, config }) {
       layerState._pickEventIdByEntityId.set(sphereId, id);
 
       const groundRingId = `${id}:cneos-ground-ring`;
+      const cneosRingPts = makeGroundEllipsePositions(
+        event.location.lat,
+        event.location.lon,
+        5500,
+        5500,
+        0,
+        28,
+      );
       const groundRingEnt = layerState._dataSource.entities.add({
         id: groundRingId,
-        position: geom.groundPosition,
-        ellipse: {
-          semiMajorAxis: 5500,
-          semiMinorAxis: 5500,
-          material: pointColor.withAlpha(isSelected ? 0.08 : 0.03),
-          outline: true,
-          outlineColor: pointColor.withAlpha(isSelected ? 0.65 : 0.3),
-          outlineWidth: 1,
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        polyline: {
+          positions: cneosRingPts,
+          width: isSelected ? 2 : 1.2,
+          material: pointColor.withAlpha(isSelected ? 0.65 : 0.35),
+          clampToGround: true,
+          classificationType: Cesium.ClassificationType.BOTH,
         },
       });
       horizon.shapes.push(groundRingEnt);
@@ -1172,6 +1236,12 @@ export function createRendering({ layerState, services, components, config }) {
     for (const event of events) {
       addEventEntities(event);
     }
+    if (
+      layerState._darkFlightActive &&
+      layerState._darkFlightResult?.feasible
+    ) {
+      renderDarkFlight();
+    }
     syncHorizonListener();
     publishOverlayCards();
     requestRender();
@@ -1232,9 +1302,29 @@ export function createRendering({ layerState, services, components, config }) {
     const pts = [];
     for (const band of df.massSweep || []) {
       pts.push(Cesium.Cartesian3.fromDegrees(band.lon, band.lat, 0));
+      if (band.underPoint) {
+        pts.push(
+          Cesium.Cartesian3.fromDegrees(
+            band.underPoint.lon,
+            band.underPoint.lat,
+            0,
+          ),
+        );
+      }
+      if (band.overPoint) {
+        pts.push(
+          Cesium.Cartesian3.fromDegrees(
+            band.overPoint.lon,
+            band.overPoint.lat,
+            0,
+          ),
+        );
+      }
       if (Array.isArray(band.track)) {
         for (const p of band.track) {
-          pts.push(Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.altM));
+          if (p.altM <= 16000) {
+            pts.push(Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.altM));
+          }
         }
       }
     }
@@ -1242,12 +1332,20 @@ export function createRendering({ layerState, services, components, config }) {
       pts.push(
         Cesium.Cartesian3.fromDegrees(comp.stone.lon, comp.stone.lat, 0),
       );
+      if (comp.simulated) {
+        pts.push(
+          Cesium.Cartesian3.fromDegrees(
+            comp.simulated.lon,
+            comp.simulated.lat,
+            0,
+          ),
+        );
+      }
     }
     if (!pts.length) return baseSphere;
     const dfSphere = Cesium.BoundingSphere.fromPoints(pts);
-    const combined = Cesium.BoundingSphere.union(baseSphere, dfSphere);
-    combined.radius = Math.max(combined.radius * 1.45, 18_000);
-    return combined;
+    dfSphere.radius = Math.max(dfSphere.radius * 1.45, 8_500);
+    return dfSphere;
   }
 
   function resolvePickedEventId(picked) {

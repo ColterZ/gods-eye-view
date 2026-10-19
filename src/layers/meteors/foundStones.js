@@ -228,6 +228,8 @@ export function evaluateFoundStoneResiduals({
   entryAngleDeg,
   sounding,
   tuning = {},
+  recordTrack = true,
+  dtSec = 0.5,
 }) {
   if (!Array.isArray(stones) || !stones.length || !Number.isFinite(azimuthDeg)) {
     return { comparisons: [], rmsErrorM: null, meanBiasM: null };
@@ -288,7 +290,8 @@ export function evaluateFoundStoneResiduals({
       densityKgM3,
       shapeFactor,
       sounding: scaledSounding,
-      recordTrack: true,
+      recordTrack,
+      dtSec,
     });
     if (!simF2) continue;
 
@@ -314,7 +317,8 @@ export function evaluateFoundStoneResiduals({
         densityKgM3,
         shapeFactor: shapeFactor * 1.12,
         sounding: flare1Sounding,
-        recordTrack: true,
+        recordTrack,
+        dtSec,
       });
       if (simF1) {
         const dLatF1 = (stone.lat - simF1.lat) * METERS_PER_DEG_LAT;
@@ -396,11 +400,12 @@ export function autoFitDarkFlightToFoundStones({
   };
   let bestEval = baseline;
 
-  // Stage 1: Coarse joint search over windScale, shapeFactor, azimuthDeltaDeg, speedScale
-  const windScales = [0.7, 1.0, 1.3, 1.6, 1.9];
+  // Fast coordinate-descent + joint multi-stage fragmentation search using dtSec=2.0 (recordTrack=false)
+  // so auto-fit completes in <100 ms on the main thread, then re-evaluates bestTuning at dtSec=0.5 with tracks.
+  const windScales = [0.7, 1.0, 1.3, 1.6];
   const shapeFactors = [0.9, 1.15, 1.45];
   const azDeltas = [-8, -4, 0, 4, 8, 12];
-  const speedScales = [0.35, 0.55, 0.8, 1.0, 1.25];
+  const speedScales = [0.4, 0.75, 1.0, 1.25];
 
   for (const windScale of windScales) {
     for (const shapeFactor of shapeFactors) {
@@ -414,6 +419,7 @@ export function autoFitDarkFlightToFoundStones({
             lonDeltaDeg: 0,
             azimuthDeltaDeg,
             speedScale,
+            upperFlareOffsetKm: 0,
           };
           const res = evaluateFoundStoneResiduals({
             stones,
@@ -425,6 +431,8 @@ export function autoFitDarkFlightToFoundStones({
             entryAngleDeg,
             sounding,
             tuning,
+            recordTrack: false,
+            dtSec: 2.0,
           });
           if (
             res.rmsErrorM !== null &&
@@ -440,10 +448,10 @@ export function autoFitDarkFlightToFoundStones({
 
   // Stage 2: Fine-tune terminus release point (latDeltaDeg, lonDeltaDeg) jointly with
   // speedScale, windScale, and Multi-Stage Fragmentation (upperFlareOffsetKm for 2-flare breakups)
-  const latOffsets = [-0.012, -0.005, 0, 0.004, 0.008];
-  const lonOffsets = [0, 0.014, 0.024, 0.032];
+  const latOffsets = [-0.012, -0.005, 0, 0.005];
+  const lonOffsets = [0, 0.016, 0.026, 0.032];
   const stage2Speeds = [0.75, 1.1, 1.45];
-  const stage2Winds = [0.55, 0.8, 1.05];
+  const stage2Winds = [0.55, 0.85, 1.1];
   const upperFlareOffsetsKm = stones.length >= 2 ? [0, 1.8, 2.8] : [0];
   const baseBest = { ...bestTuning };
 
@@ -471,6 +479,8 @@ export function autoFitDarkFlightToFoundStones({
               entryAngleDeg,
               sounding,
               tuning,
+              recordTrack: false,
+              dtSec: 2.0,
             });
             if (
               res.rmsErrorM !== null &&
@@ -483,6 +493,24 @@ export function autoFitDarkFlightToFoundStones({
         }
       }
     }
+  }
+
+  // Final high-resolution evaluation (dtSec=0.5, recordTrack=true) for the winning parameters
+  const finalEval = evaluateFoundStoneResiduals({
+    stones,
+    terminalLat,
+    terminalLon,
+    terminalAltM,
+    terminalSpeedMs,
+    azimuthDeg,
+    entryAngleDeg,
+    sounding,
+    tuning: bestTuning,
+    recordTrack: true,
+    dtSec: 0.5,
+  });
+  if (finalEval.rmsErrorM !== null) {
+    bestEval = finalEval;
   }
 
   const cosLat = Math.max(0.05, Math.cos(terminalLat * DEG_TO_RAD));

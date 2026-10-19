@@ -158,6 +158,9 @@ export function createLifecycle({ layerState, services, components, config }) {
         components.rendering.update(layerState._filteredEvents);
         if (layerState._selectedEventId) {
           components.rendering.selectEvent(layerState._selectedEventId);
+          if (layerState._darkFlightActive) {
+            components.controls.methods.setParams({ darkFlight: true });
+          }
         }
         if (
           layerState._sceneDirector &&

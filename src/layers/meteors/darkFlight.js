@@ -242,6 +242,7 @@ export function integrateFragmentDarkFlight({
   shapeFactor = 1.15,
   sounding = null,
   recordTrack = false,
+  dtSec = 0.5,
 }) {
   const azRad = azimuthDeg * DEG_TO_RAD;
   const elevRad = Math.max(5, Math.min(89, entryAngleDeg)) * DEG_TO_RAD;
@@ -317,8 +318,8 @@ export function integrateFragmentDarkFlight({
     };
   }
 
-  const dt = 0.5;
-  const maxSteps = 3600; // up to 30 minutes free fall from upper mesosphere/stratosphere
+  const dt = Math.max(0.25, Math.min(2.5, Number(dtSec) || 0.5));
+  const maxSteps = Math.ceil(1800 / dt); // up to 30 minutes free fall from upper mesosphere/stratosphere
   let timeSec = 0;
 
   for (let step = 0; step < maxSteps; step++) {
