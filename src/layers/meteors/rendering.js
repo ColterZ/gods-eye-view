@@ -476,6 +476,82 @@ export function createRendering({ layerState, services, components, config }) {
               }),
             );
           }
+
+          // Also render secondary mass-sweep pins & 3D tracks for each Sub-Bolide's
+          // complementary masses (e.g. F1's larger 300g/100g/50g pieces and F2's smaller 30g/10g/3g pieces)
+          if (
+            (mode === 'all' || mode === 'sweep') &&
+            Array.isArray(sb.massSweep)
+          ) {
+            for (const sbBand of sb.massSweep) {
+              const isPrimaryBand = (df.massSweep || []).some(
+                (m) =>
+                  m.label === sbBand.label && m.subBolideId === sbBand.subBolideId,
+              );
+              if (isPrimaryBand) continue;
+              const bColor = Cesium.Color.fromCssColorString(sbBand.color);
+              if (Array.isArray(sbBand.track) && sbBand.track.length > 1) {
+                layerState._darkFlightEntities.push(
+                  layerState._dataSource.entities.add({
+                    id: `df:${df.eventId}:subtrack:${sb.id}:${sbBand.label}`,
+                    polyline: {
+                      positions: sbBand.track.map((pt) =>
+                        Cesium.Cartesian3.fromDegrees(pt.lon, pt.lat, pt.altM),
+                      ),
+                      width: 1.5,
+                      material: new Cesium.PolylineDashMaterialProperty({
+                        color: bColor.withAlpha(0.65),
+                        dashLength: 10,
+                      }),
+                      arcType: Cesium.ArcType.NONE,
+                    },
+                  }),
+                );
+              }
+              layerState._darkFlightEntities.push(
+                layerState._dataSource.entities.add({
+                  id: `df:${df.eventId}:submass:${sb.id}:${sbBand.label}`,
+                  position: Cesium.Cartesian3.fromDegrees(
+                    sbBand.lon,
+                    sbBand.lat,
+                    0,
+                  ),
+                  point: {
+                    pixelSize: 6.5,
+                    color: bColor.withAlpha(0.85),
+                    outlineColor: sbColor,
+                    outlineWidth: 1.5,
+                    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                  },
+                  label: showCompact
+                    ? {
+                        text: `${sbBand.label}·${sb.id}`,
+                        font: '600 9px ui-monospace, SFMono-Regular, Menlo, monospace',
+                        fillColor: bColor.withAlpha(0.9),
+                        outlineColor: Cesium.Color.BLACK,
+                        outlineWidth: 2,
+                        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                        showBackground: true,
+                        backgroundColor: new Cesium.Color(0.03, 0.05, 0.09, 0.6),
+                        backgroundPadding: new Cesium.Cartesian2(3, 1.5),
+                        horizontalOrigin: Cesium.HorizontalOrigin.RIGHT,
+                        verticalOrigin: Cesium.VerticalOrigin.CENTER,
+                        pixelOffset: new Cesium.Cartesian2(-8, 0),
+                        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        scaleByDistance: new Cesium.NearFarScalar(
+                          2500,
+                          1.0,
+                          70000,
+                          0.45,
+                        ),
+                      }
+                    : undefined,
+                }),
+              );
+            }
+          }
         }
       }
 
