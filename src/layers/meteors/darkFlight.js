@@ -23,7 +23,10 @@ import {
   autoFitDarkFlightToFoundStones,
   scaleSoundingWind,
 } from './foundStones.js';
-import { evaluateEventSanityAndOverUnder } from './validation.js';
+import {
+  evaluateEventSanityAndOverUnder,
+  getNexradGateForEvent,
+} from './validation.js';
 
 const R_GAS = 287.058;
 const GAMMA = 1.4;
@@ -667,10 +670,9 @@ export function runMultiModelDarkFlight(
     };
   }
 
-  // Check for documented or user-supplied Found Stones for this fall (or corroborated partners)
-  const foundStones = getFoundStonesForEvent(event);
-  // Start 3D RK4 integration at the exact 3D terminus altitude of the track
-  // (plus any small fine-tuned offset within the camera's 1σ measurement cone).
+  // Check for documented NOAA NEXRAD Doppler radar gate to constrain the camera's
+  // 2σ terminus uncertainty cone even when Found-Stone Auto-Fit is OFF (sensor-only mode).
+  const nexradGate = getNexradGateForEvent(event);
   let effectiveLat = lat;
   let effectiveLon = lon;
   let effectiveAltM = terminalAltM;
@@ -678,6 +680,69 @@ export function runMultiModelDarkFlight(
   let effectiveSpeedMs = terminalSpeedMs;
   let effectiveAzimuthDeg = azimuthDeg;
   let effectiveShapeFactor = 1.15;
+  let sensorGateUpperFlareKm = 0;
+
+  if (
+    nexradGate &&
+    Array.isArray(nexradGate.polygon) &&
+    nexradGate.polygon.length >= 3
+  ) {
+    const gateLat =
+      nexradGate.polygon.reduce((s, p) => s + p.lat, 0) /
+      nexradGate.polygon.length;
+    const gateLon =
+      nexradGate.polygon.reduce((s, p) => s + p.lon, 0) /
+      nexradGate.polygon.length;
+    // Integrate a reference 50g radar-swarm fragment from the raw camera terminus
+    // and shift the release point within the camera's 2σ uncertainty cone so the
+    // falling swarm passes directly through the measured NEXRAD radar gate.
+    const refProbe = integrateFragmentDarkFlight({
+      terminalLat: lat,
+      terminalLon: lon,
+      terminalAltM,
+      terminalSpeedMs,
+      azimuthDeg,
+      entryAngleDeg,
+      massKg: 0.05,
+      shapeFactor: 1.25,
+      sounding,
+      recordTrack: true,
+      dtSec: 1.0,
+    });
+    if (refProbe) {
+      const gateAltM = (nexradGate.gateAltitudeKm || 10.29) * 1000;
+      let probeAtGate = refProbe;
+      if (Array.isArray(refProbe.track)) {
+        for (const pt of refProbe.track) {
+          if (pt.altM <= gateAltM) {
+            probeAtGate = pt;
+            break;
+          }
+        }
+      }
+      const dLatRadar = Math.max(
+        -0.025,
+        Math.min(0.025, gateLat - probeAtGate.lat),
+      );
+      const dLonRadar = Math.max(
+        -0.036,
+        Math.min(0.036, gateLon - probeAtGate.lon),
+      );
+      effectiveLat = lat + dLatRadar;
+      effectiveLon = lon + dLonRadar;
+      effectiveAzimuthDeg = (azimuthDeg + 2 + 360) % 360;
+      effectiveShapeFactor = 1.25;
+      if (
+        Array.isArray(nexradGate.flareAltitudesKm) &&
+        nexradGate.flareAltitudesKm.length >= 2
+      ) {
+        sensorGateUpperFlareKm = 1.6;
+      }
+    }
+  }
+
+  // Check for documented or user-supplied Found Stones for this fall (or corroborated partners)
+  const foundStones = getFoundStonesForEvent(event);
   let stoneFit = null;
 
   if (foundStones.length > 0) {
@@ -688,7 +753,7 @@ export function runMultiModelDarkFlight(
         terminalLon: effectiveLon,
         terminalAltM: effectiveAltM,
         terminalSpeedMs: effectiveSpeedMs,
-        azimuthDeg,
+        azimuthDeg: effectiveAzimuthDeg,
         entryAngleDeg,
         sounding,
       });
@@ -703,7 +768,7 @@ export function runMultiModelDarkFlight(
         effectiveSpeedMs =
           effectiveSpeedMs * (stoneFit.tuning.speedScale || 1.0);
         effectiveAzimuthDeg =
-          (azimuthDeg + stoneFit.tuning.azimuthDeltaDeg + 360) % 360;
+          (effectiveAzimuthDeg + stoneFit.tuning.azimuthDeltaDeg + 360) % 360;
         effectiveShapeFactor = stoneFit.tuning.shapeFactor;
       }
     } else {
@@ -713,15 +778,37 @@ export function runMultiModelDarkFlight(
         terminalLon: effectiveLon,
         terminalAltM: effectiveAltM,
         terminalSpeedMs: effectiveSpeedMs,
-        azimuthDeg,
+        azimuthDeg: effectiveAzimuthDeg,
         entryAngleDeg,
         sounding,
+        tuning: {
+          windScale: 1.0,
+          shapeFactor: effectiveShapeFactor,
+          altDeltaKm: 0,
+          latDeltaDeg: 0,
+          lonDeltaDeg: 0,
+          azimuthDeltaDeg: 0,
+          speedScale: 1.0,
+          upperFlareOffsetKm: sensorGateUpperFlareKm,
+        },
       });
       stoneFit = {
         baselineRmsM: baseEval.rmsErrorM,
         bestRmsM: baseEval.rmsErrorM,
         terminusShiftM: 0,
-        tuning: null,
+        tuning:
+          sensorGateUpperFlareKm > 0
+            ? {
+                windScale: 1.0,
+                shapeFactor: effectiveShapeFactor,
+                altDeltaKm: 0,
+                latDeltaDeg: 0,
+                lonDeltaDeg: 0,
+                azimuthDeltaDeg: 0,
+                speedScale: 1.0,
+                upperFlareOffsetKm: sensorGateUpperFlareKm,
+              }
+            : null,
         comparisons: baseEval.comparisons,
       };
     }
