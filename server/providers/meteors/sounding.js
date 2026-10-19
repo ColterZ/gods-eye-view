@@ -134,11 +134,16 @@ export function parseOpenMeteoSounding(
   const rawDriftAz = (Math.atan2(meanU, meanV) * 180) / Math.PI;
   const meanDriftToDeg = Math.round(((rawDriftAz % 360) + 360) % 360);
 
+  const groundElevationM = Number.isFinite(Number(payload?.elevation))
+    ? Math.max(0, Math.round(Number(payload.elevation)))
+    : 0;
+
   return {
     schemaVersion: 1,
     source: 'Open-Meteo Upper-Air Reanalysis/Forecast (10m–30hPa)',
     lat,
     lon,
+    groundElevationM,
     targetIso,
     soundingTimeUtc: hourly.time[idx] + ':00Z',
     stale: false,

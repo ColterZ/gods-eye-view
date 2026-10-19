@@ -149,17 +149,35 @@ export function getAtmosphere(altitudeM) {
 
 export function interpolateWind(sounding, altitudeM) {
   const samples = sounding?.samples;
+  const turbSigmaMs =
+    altitudeM <= 2000
+      ? 1.25
+      : altitudeM <= 12000
+        ? 0.45 + 0.8 * Math.exp(-(altitudeM - 2000) / 3500)
+        : 0.25;
   if (!Array.isArray(samples) || !samples.length) {
-    return { u: 0, v: 0, altitude: altitudeM };
+    return { u: 0, v: 0, w: 0, turbSigmaMs, altitude: altitudeM };
   }
   if (altitudeM <= samples[0].altitude) {
-    return { u: samples[0].u, v: samples[0].v, altitude: altitudeM };
+    return {
+      u: samples[0].u,
+      v: samples[0].v,
+      w: Number(samples[0].w) || 0,
+      turbSigmaMs,
+      altitude: altitudeM,
+    };
   }
   const last = samples[samples.length - 1];
   if (altitudeM >= last.altitude) {
     // Exponential decay above highest measured sounding level (30 hPa ~24 km)
     const decay = Math.exp(-(altitudeM - last.altitude) / 12000);
-    return { u: last.u * decay, v: last.v * decay, altitude: altitudeM };
+    return {
+      u: last.u * decay,
+      v: last.v * decay,
+      w: (Number(last.w) || 0) * decay,
+      turbSigmaMs,
+      altitude: altitudeM,
+    };
   }
   for (let i = 0; i < samples.length - 1; i++) {
     const a = samples[i];
@@ -170,11 +188,86 @@ export function interpolateWind(sounding, altitudeM) {
       return {
         u: a.u + (b.u - a.u) * t,
         v: a.v + (b.v - a.v) * t,
+        w: (Number(a.w) || 0) + ((Number(b.w) || 0) - (Number(a.w) || 0)) * t,
+        turbSigmaMs,
         altitude: altitudeM,
       };
     }
   }
-  return { u: 0, v: 0, altitude: altitudeM };
+  return { u: 0, v: 0, w: 0, turbSigmaMs, altitude: altitudeM };
+}
+
+/**
+ * Compute Artemieva-Shuvalov / Passechnik bow-shock transverse fragmentation
+ * impulse velocity (m/s) at breakup altitude.
+ */
+export function computeBowShockLateralSpeedMs({
+  altM = 45000,
+  speedMs = 1000,
+  massKg = 0.05,
+  parentMassKg = 0.1,
+  densityKgM3 = 3400,
+  lateralImpulseCoeff = 0.55,
+} = {}) {
+  const cT = Math.max(0, Number(lateralImpulseCoeff) || 0);
+  if (cT <= 0) return 0;
+  const atm = getAtmosphere(Math.max(0, altM));
+  const rhoRatio = Math.sqrt(
+    Math.max(0, atm.density) / Math.max(500, densityKgM3),
+  );
+  const massScale = Math.pow(
+    Math.max(0.0005, massKg) / Math.max(0.001, parentMassKg),
+    -1 / 6,
+  );
+  return Math.min(280, cT * rhoRatio * Math.max(50, speedMs) * massScale);
+}
+
+/**
+ * Compute terminal impact kinetic energy (J) and Poncelet soil penetration
+ * depth (cm) across 3 field-hunter surface resistance classes.
+ */
+export function computeImpactPenetration({
+  massKg = 0.05,
+  densityKgM3 = 3400,
+  impactSpeedMs = 45,
+  impactAngleDeg = 75,
+  shapeFactor = 1.15,
+} = {}) {
+  const m = Math.max(0.0001, Number(massKg) || 0.05);
+  const v = Math.max(0, Number(impactSpeedMs) || 0);
+  const rhoM = Math.max(500, Number(densityKgM3) || 3400);
+  const volume = m / rhoM;
+  const diameterM = 2 * Math.cbrt((3 * volume) / (4 * Math.PI));
+  const areaM2 =
+    Math.PI * (diameterM / 2) ** 2 * Math.max(0.7, Number(shapeFactor) || 1.15);
+  const sinImpact = Math.sin(
+    Math.max(15, Math.min(90, Number(impactAngleDeg) || 75)) * DEG_TO_RAD,
+  );
+  const impactEnergyJ = Math.round(0.5 * m * v * v * 100) / 100;
+
+  // Poncelet penetration depth: z = (m / (2 * b * A)) * ln(1 + (b * v_n^2) / R)
+  const depthForSurface = (bearingResistancePa, inertialSoilDensityKgM3) => {
+    const b = 0.5 * inertialSoilDensityKgM3;
+    const vn = v * sinImpact;
+    const depthM =
+      (m / Math.max(1e-6, 2 * b * areaM2)) *
+      Math.log(1 + (b * vn * vn) / Math.max(1e4, bearingResistancePa));
+    return Math.round(Math.max(0, depthM * 100) * 10) / 10;
+  };
+
+  const softSoilCm = depthForSurface(0.28e6, 1450);
+  const grasslandCm = depthForSurface(0.95e6, 1650);
+  const hardpanCm = depthForSurface(3.8e6, 1950);
+
+  return {
+    impactEnergyJ,
+    penetrationDepthCm: grasslandCm,
+    penetrationBySurface: {
+      softSoilCm,
+      grasslandCm,
+      hardpanCm,
+    },
+  };
 }
 
 export function computeDragCoefficient(
@@ -229,9 +322,14 @@ class SeededRng {
   }
 }
 
+export const V_ABLATION_THRESHOLD_MS = 3000;
+
 /**
  * Integrate a single fragment's dark-flight trajectory from terminal ablation
- * state down to ground impact (alt = 0) using RK4.
+ * state down to ground impact (alt = groundElevationM) using RK4, with coupled
+ * hypersonic ablation (dm/dt for v > 3 km/s), bow-shock lateral impulse,
+ * aerodynamic lift/gliding (CL/CD), vertical wind (w), and Poncelet impact
+ * soil penetration depth.
  */
 export function integrateFragmentDarkFlight({
   terminalLat,
@@ -244,35 +342,89 @@ export function integrateFragmentDarkFlight({
   densityKgM3 = 3400,
   shapeFactor = 1.15,
   sounding = null,
+  groundElevationM = 0,
+  ablationSigma = 0.018,
+  ablationThresholdMs = V_ABLATION_THRESHOLD_MS,
+  ablateFromInitialMass = false,
+  lateralImpulseCoeff = 0,
+  lateralAngleRad = 0,
+  liftToDragRatio = 0,
+  liftAzimuthRad = 0,
+  verticalWindMs = 0,
   recordTrack = false,
   dtSec = 0.5,
 }) {
   const azRad = azimuthDeg * DEG_TO_RAD;
   const elevRad = Math.max(5, Math.min(89, entryAngleDeg)) * DEG_TO_RAD;
+  const floorAltM = Math.max(
+    0,
+    Math.min(
+      Math.max(0, (Number(terminalAltM) || 20000) - 50),
+      Number(groundElevationM) || 0,
+    ),
+  );
   // Smaller fragments have higher area-to-mass ratio (A/m ∝ m^-1/3) and decelerate
   // out of hypersonic forward motion much faster during breakup than large 1 kg blocks.
   const massSpeedFactor = Math.max(
     0.25,
     Math.min(1.65, Math.pow(Math.max(0.001, massKg) / 0.08, 0.34)),
   );
-  const startSpeed = Math.min(
-    Math.max(terminalSpeedMs * massSpeedFactor, 110),
-    3200,
-  );
+  const maxStartSpeed = ablateFromInitialMass ? 18000 : 3200;
+  const startSpeed = ablateFromInitialMass
+    ? Math.min(Math.max(terminalSpeedMs, 110), maxStartSpeed)
+    : Math.min(Math.max(terminalSpeedMs * massSpeedFactor, 110), maxStartSpeed);
   const vHoriz = startSpeed * Math.cos(elevRad);
+
+  // Bow-shock transverse fragmentation impulse perpendicular to heading
+  const vPerp = computeBowShockLateralSpeedMs({
+    altM: terminalAltM,
+    speedMs: startSpeed,
+    massKg,
+    densityKgM3,
+    lateralImpulseCoeff,
+  });
+  const perpAzRad = azRad + Math.PI / 2;
+  const vPerpHoriz = vPerp * Math.cos(lateralAngleRad);
+  const vPerpVert = vPerp * Math.sin(lateralAngleRad) * 0.25;
+
+  const sigmaAbl = Math.max(0, Number(ablationSigma) || 0);
+  const sigmaAblSi = sigmaAbl * 1e-6; // s^2/km^2 -> s^2/m^2
+  const vAblThresh = Math.max(500, Number(ablationThresholdMs) || V_ABLATION_THRESHOLD_MS);
+
+  // Pre-terminus + post-breakup Bronshten ablation estimate when starting near dark-flight transition
+  const refBreakupSpeedKmS = Math.max(
+    startSpeed / 1000,
+    Math.min(9.5, ((Number(terminalSpeedMs) || 1200) * 2.2) / 1000),
+  );
+  const vThreshKmS = vAblThresh / 1000;
+  const bronshtenFactor =
+    sigmaAbl > 0 && refBreakupSpeedKmS > vThreshKmS
+      ? Math.exp(
+          Math.min(
+            2.2,
+            0.5 * sigmaAbl * (refBreakupSpeedKmS ** 2 - vThreshKmS ** 2),
+          ),
+        )
+      : 1;
+
+  const initialMassKg = ablateFromInitialMass
+    ? Math.max(0.0001, massKg)
+    : Math.round(massKg * bronshtenFactor * 100000) / 100000;
 
   const state = {
     lat: terminalLat * DEG_TO_RAD,
     lon: terminalLon * DEG_TO_RAD,
-    alt: Math.max(100, Math.min(75000, terminalAltM)),
-    vx: vHoriz * Math.sin(azRad),
-    vy: vHoriz * Math.cos(azRad),
-    vz: -startSpeed * Math.sin(elevRad),
+    alt: Math.max(floorAltM + 10, Math.min(75000, terminalAltM)),
+    vx: vHoriz * Math.sin(azRad) + vPerpHoriz * Math.sin(perpAzRad),
+    vy: vHoriz * Math.cos(azRad) + vPerpHoriz * Math.cos(perpAzRad),
+    vz: -startSpeed * Math.sin(elevRad) + vPerpVert,
+    mass: ablateFromInitialMass ? initialMassKg : Math.max(0.0001, massKg),
   };
 
-  const volume = massKg / Math.max(densityKgM3, 500);
-  const diameter = 2 * Math.cbrt((3 * volume) / (4 * Math.PI));
-  const area = Math.PI * (diameter / 2) ** 2 * shapeFactor;
+  let darkFlightOnsetAltM = startSpeed <= vAblThresh ? state.alt : null;
+  const rhoMeteoroid = Math.max(densityKgM3, 500);
+  const ldRatio = Math.max(0, Math.min(0.35, Number(liftToDragRatio) || 0));
+  const wOffsetMs = Number(verticalWindMs) || 0;
 
   const track = recordTrack
     ? [
@@ -284,12 +436,19 @@ export function integrateFragmentDarkFlight({
       ]
     : null;
 
+  const dt = Math.max(0.25, Math.min(2.5, Number(dtSec) || 0.5));
+
   function derivAt(s) {
+    const curMass = Math.max(1e-5, s.mass);
+    const volume = curMass / rhoMeteoroid;
+    const diameter = 2 * Math.cbrt((3 * volume) / (4 * Math.PI));
+    const area = Math.PI * (diameter / 2) ** 2 * shapeFactor;
+
     const atm = getAtmosphere(s.alt);
     const wind = interpolateWind(sounding, s.alt);
     const vRelX = s.vx - wind.u;
     const vRelY = s.vy - wind.v;
-    const vRelZ = s.vz;
+    const vRelZ = s.vz - (wind.w || 0) - wOffsetMs;
     const vRel = Math.hypot(vRelX, vRelY, vRelZ);
 
     const cd = computeDragCoefficient(
@@ -308,16 +467,44 @@ export function integrateFragmentDarkFlight({
         ? 1 + 45 * Math.pow((s.alt - 20000) / 20000, 1.8)
         : 1;
     const q = 0.5 * atm.density * vRel * vRel * highAltFactor;
-    const dragAccel = massKg > 0 ? (q * cd * area) / massKg : 0;
+    const rawDragAccel = curMass > 0 ? (q * cd * area) / curMass : 0;
+    // Physical stiffness guard: drag is strictly dissipative and cannot reverse vRel within one RK4 step
+    const dragAccel = Math.min(rawDragAccel, (0.82 * vRel) / dt);
 
-    const axDrag = vRel > 0 ? (-dragAccel * vRelX) / vRel : 0;
-    const ayDrag = vRel > 0 ? (-dragAccel * vRelY) / vRel : 0;
-    const azDrag = vRel > 0 ? (-dragAccel * vRelZ) / vRel : 0;
+    let axAero = vRel > 0 ? (-dragAccel * vRelX) / vRel : 0;
+    let ayAero = vRel > 0 ? (-dragAccel * vRelY) / vRel : 0;
+    let azAero = vRel > 0 ? (-dragAccel * vRelZ) / vRel : 0;
+
+    // Magnus / aerodynamic lift perpendicular to relative flow
+    if (ldRatio > 0 && vRel > 0.5) {
+      const liftAccel = dragAccel * ldRatio;
+      const horizRel = Math.hypot(vRelX, vRelY);
+      const liftDirX =
+        horizRel > 0.1
+          ? (-vRelY / horizRel) * Math.cos(liftAzimuthRad) +
+            (vRelX / horizRel) * Math.sin(liftAzimuthRad)
+          : Math.sin(liftAzimuthRad);
+      const liftDirY =
+        horizRel > 0.1
+          ? (vRelX / horizRel) * Math.cos(liftAzimuthRad) +
+            (vRelY / horizRel) * Math.sin(liftAzimuthRad)
+          : Math.cos(liftAzimuthRad);
+      axAero += liftAccel * liftDirX;
+      ayAero += liftAccel * liftDirY;
+      azAero += liftAccel * 0.15 * Math.cos(liftAzimuthRad);
+    }
+
+    // Coupled classical ablation dm/dt when relative speed exceeds ablation threshold
+    const rawDMass =
+      sigmaAblSi > 0 && vRel > vAblThresh
+        ? -0.5 * sigmaAblSi * cd * area * atm.density * vRel * vRel * vRel
+        : 0;
+    const dMass = Math.max(rawDMass, (-0.45 * curMass) / dt);
 
     const fCor = 2 * EARTH_OMEGA * Math.sin(s.lat);
-    const ax = axDrag + fCor * s.vy;
-    const ay = ayDrag - fCor * s.vx;
-    const az = azDrag - G;
+    const ax = axAero + fCor * s.vy;
+    const ay = ayAero - fCor * s.vx;
+    const az = azAero - G;
 
     const r = EARTH_RADIUS_M + s.alt;
     return {
@@ -327,14 +514,21 @@ export function integrateFragmentDarkFlight({
       dVx: ax,
       dVy: ay,
       dVz: az,
+      dMass,
     };
   }
 
-  const dt = Math.max(0.25, Math.min(2.5, Number(dtSec) || 0.5));
   const maxSteps = Math.ceil(1800 / dt); // up to 30 minutes free fall from upper mesosphere/stratosphere
   let timeSec = 0;
 
   for (let step = 0; step < maxSteps; step++) {
+    const prevLat = state.lat;
+    const prevLon = state.lon;
+    const prevAlt = state.alt;
+    const prevVx = state.vx;
+    const prevVy = state.vy;
+    const prevVz = state.vz;
+
     const k1 = derivAt(state);
     if (!Number.isFinite(k1.dLat) || !Number.isFinite(k1.dLon)) return null;
 
@@ -345,6 +539,7 @@ export function integrateFragmentDarkFlight({
       vx: state.vx + (k1.dVx * dt) / 2,
       vy: state.vy + (k1.dVy * dt) / 2,
       vz: state.vz + (k1.dVz * dt) / 2,
+      mass: Math.max(1e-5, state.mass + (k1.dMass * dt) / 2),
     };
     const k2 = derivAt(s2);
 
@@ -355,6 +550,7 @@ export function integrateFragmentDarkFlight({
       vx: state.vx + (k2.dVx * dt) / 2,
       vy: state.vy + (k2.dVy * dt) / 2,
       vz: state.vz + (k2.dVz * dt) / 2,
+      mass: Math.max(1e-5, state.mass + (k2.dMass * dt) / 2),
     };
     const k3 = derivAt(s3);
 
@@ -365,6 +561,7 @@ export function integrateFragmentDarkFlight({
       vx: state.vx + k3.dVx * dt,
       vy: state.vy + k3.dVy * dt,
       vz: state.vz + k3.dVz * dt,
+      mass: Math.max(1e-5, state.mass + k3.dMass * dt),
     };
     const k4 = derivAt(s4);
 
@@ -374,7 +571,18 @@ export function integrateFragmentDarkFlight({
     state.vx += ((k1.dVx + 2 * k2.dVx + 2 * k3.dVx + k4.dVx) * dt) / 6;
     state.vy += ((k1.dVy + 2 * k2.dVy + 2 * k3.dVy + k4.dVy) * dt) / 6;
     state.vz += ((k1.dVz + 2 * k2.dVz + 2 * k3.dVz + k4.dVz) * dt) / 6;
-    timeSec += dt;
+    state.mass = Math.max(
+      1e-5,
+      state.mass +
+        ((k1.dMass + 2 * k2.dMass + 2 * k3.dMass + k4.dMass) * dt) / 6,
+    );
+
+    if (
+      darkFlightOnsetAltM === null &&
+      Math.hypot(state.vx, state.vy, state.vz) <= vAblThresh
+    ) {
+      darkFlightOnsetAltM = state.alt;
+    }
 
     if (
       Math.abs(state.lat) > Math.PI / 2 ||
@@ -383,27 +591,81 @@ export function integrateFragmentDarkFlight({
       return null;
     }
 
-    if (track && (step <= 30 || step % 4 === 0 || state.alt <= 0)) {
+    if (state.alt <= floorAltM) {
+      const spanAlt = prevAlt - state.alt;
+      const frac =
+        spanAlt > 1e-6
+          ? Math.max(0, Math.min(1, (prevAlt - floorAltM) / spanAlt))
+          : 1;
+      state.lat = prevLat + (state.lat - prevLat) * frac;
+      state.lon = prevLon + (state.lon - prevLon) * frac;
+      state.vx = prevVx + (state.vx - prevVx) * frac;
+      state.vy = prevVy + (state.vy - prevVy) * frac;
+      state.vz = prevVz + (state.vz - prevVz) * frac;
+      state.alt = floorAltM;
+      timeSec += dt * frac;
+      if (track) {
+        track.push({
+          lat: state.lat * RAD_TO_DEG,
+          lon: state.lon * RAD_TO_DEG,
+          altM: floorAltM,
+        });
+      }
+      break;
+    }
+
+    timeSec += dt;
+
+    if (track && (step <= 30 || step % 4 === 0)) {
       track.push({
         lat: state.lat * RAD_TO_DEG,
         lon: state.lon * RAD_TO_DEG,
-        altM: Math.max(0, state.alt),
+        altM: Math.max(floorAltM, state.alt),
       });
     }
-
-    if (state.alt <= 0) {
-      state.alt = 0;
-      break;
-    }
   }
+
+  const finalMassKg = Math.round(state.mass * 100000) / 100000;
+  const effectiveInitialMassKg = Math.max(finalMassKg, initialMassKg);
+  const ablationMassLossPct =
+    effectiveInitialMassKg > 0
+      ? Math.round(
+          (1 - finalMassKg / effectiveInitialMassKg) * 1000,
+        ) / 10
+      : 0;
+  const impactSpeedMs =
+    Math.round(Math.hypot(state.vx, state.vy, state.vz) * 10) / 10;
+  const horizImpactSpeed = Math.hypot(state.vx, state.vy);
+  const impactAngleDeg =
+    Math.round(
+      Math.atan2(Math.abs(state.vz), Math.max(1e-3, horizImpactSpeed)) *
+        RAD_TO_DEG *
+        10,
+    ) / 10;
+  const pen = computeImpactPenetration({
+    massKg: finalMassKg,
+    densityKgM3,
+    impactSpeedMs,
+    impactAngleDeg,
+    shapeFactor,
+  });
 
   return {
     lat: Math.round(state.lat * RAD_TO_DEG * 100000) / 100000,
     lon: Math.round(state.lon * RAD_TO_DEG * 100000) / 100000,
-    massKg,
+    groundElevationM: Math.round(floorAltM),
+    massKg: finalMassKg,
+    initialMassKg: effectiveInitialMassKg,
+    ablationMassLossPct,
+    darkFlightOnsetAltKm:
+      Math.round(((darkFlightOnsetAltM ?? state.alt) / 1000) * 10) / 10,
+    burnedOut: finalMassKg < 0.0005,
     flightTimeSec: Math.round(timeSec),
-    impactSpeedMs:
-      Math.round(Math.hypot(state.vx, state.vy, state.vz) * 10) / 10,
+    impactSpeedMs,
+    impactAngleDeg,
+    impactEnergyJ: pen.impactEnergyJ,
+    penetrationDepthCm: pen.penetrationDepthCm,
+    penetrationBySurface: pen.penetrationBySurface,
     track,
   };
 }
@@ -749,6 +1011,13 @@ export function runMultiModelDarkFlight(
   const sensorBaseSpeedMs = effectiveSpeedMs;
   const sensorBaseAzimuthDeg = effectiveAzimuthDeg;
   const sensorBaseShapeFactor = effectiveShapeFactor;
+  const sensorBaseGroundElevationM = Number.isFinite(
+    Number(sounding?.groundElevationM),
+  ) && Number(sounding.groundElevationM) > 0
+    ? Number(sounding.groundElevationM)
+    : Number.isFinite(Number(event?.location?.groundElevationM))
+      ? Number(event.location.groundElevationM)
+      : 0;
   let stoneFit = null;
 
   const baselineTuning = {
@@ -760,6 +1029,11 @@ export function runMultiModelDarkFlight(
     azimuthDeltaDeg: 0,
     speedScale: 1.0,
     upperFlareOffsetKm: sensorGateUpperFlareKm,
+    groundElevationM: sensorBaseGroundElevationM,
+    ablationSigma: 0.018,
+    lateralImpulseCoeff: 0.55,
+    liftToDragRatio: 0.0,
+    verticalWindMs: 0.0,
   };
 
   if (foundStones.length > 0 || customTuning) {
@@ -963,6 +1237,66 @@ export function runMultiModelDarkFlight(
         max: 6.0,
         step: 0.2,
       },
+      {
+        key: 'groundElevationM',
+        label: 'Ground Elevation ASL (m)',
+        beforeValue: sensorBaseGroundElevationM,
+        afterValue: Number(activeT.groundElevationM ?? sensorBaseGroundElevationM),
+        beforeFormatted: `${Math.round(sensorBaseGroundElevationM)} m ASL`,
+        afterFormatted: `${Math.round(Number(activeT.groundElevationM ?? sensorBaseGroundElevationM))} m ASL`,
+        deltaFormatted: `${Math.round(Number(activeT.groundElevationM ?? sensorBaseGroundElevationM) - sensorBaseGroundElevationM) >= 0 ? '+' : ''}${Math.round(Number(activeT.groundElevationM ?? sensorBaseGroundElevationM) - sensorBaseGroundElevationM)} m`,
+        min: 0,
+        max: 4000,
+        step: 25,
+      },
+      {
+        key: 'ablationSigma',
+        label: 'Ablation Coefficient σ (s²/km²)',
+        beforeValue: 0.018,
+        afterValue: Number(activeT.ablationSigma ?? 0.018),
+        beforeFormatted: `0.018 s²/km² (Chondrite)`,
+        afterFormatted: `${Number(activeT.ablationSigma ?? 0.018).toFixed(3)} s²/km²`,
+        deltaFormatted: `${Number(activeT.ablationSigma ?? 0.018) - 0.018 >= 0 ? '+' : ''}${(Number(activeT.ablationSigma ?? 0.018) - 0.018).toFixed(3)}`,
+        min: 0.005,
+        max: 0.05,
+        step: 0.002,
+      },
+      {
+        key: 'lateralImpulseCoeff',
+        label: 'Bow-Shock Lateral Impulse (C_T)',
+        beforeValue: 0.55,
+        afterValue: Number(activeT.lateralImpulseCoeff ?? 0.55),
+        beforeFormatted: `0.55 (Standard Shock)`,
+        afterFormatted: `${Number(activeT.lateralImpulseCoeff ?? 0.55).toFixed(2)}`,
+        deltaFormatted: `${Number(activeT.lateralImpulseCoeff ?? 0.55) - 0.55 >= 0 ? '+' : ''}${(Number(activeT.lateralImpulseCoeff ?? 0.55) - 0.55).toFixed(2)}`,
+        min: 0,
+        max: 1.5,
+        step: 0.05,
+      },
+      {
+        key: 'liftToDragRatio',
+        label: 'Aerodynamic Lift-to-Drag (L/D)',
+        beforeValue: 0,
+        afterValue: Number(activeT.liftToDragRatio ?? 0),
+        beforeFormatted: `0.00 (Tumbling)`,
+        afterFormatted: `${Number(activeT.liftToDragRatio ?? 0).toFixed(2)} (${Number(activeT.liftToDragRatio ?? 0) > 0.03 ? 'Oriented Glide' : 'Tumbling'})`,
+        deltaFormatted: `+${Number(activeT.liftToDragRatio ?? 0).toFixed(2)}`,
+        min: 0,
+        max: 0.25,
+        step: 0.01,
+      },
+      {
+        key: 'verticalWindMs',
+        label: 'Vertical Updraft/Downdraft w (m/s)',
+        beforeValue: 0,
+        afterValue: Number(activeT.verticalWindMs ?? 0),
+        beforeFormatted: `0.0 m/s`,
+        afterFormatted: `${Number(activeT.verticalWindMs ?? 0) >= 0 ? '+' : ''}${Number(activeT.verticalWindMs ?? 0).toFixed(1)} m/s`,
+        deltaFormatted: `${Number(activeT.verticalWindMs ?? 0) >= 0 ? '+' : ''}${Number(activeT.verticalWindMs ?? 0).toFixed(1)} m/s`,
+        min: -8,
+        max: 8,
+        step: 0.5,
+      },
     ];
   }
 
@@ -990,6 +1324,33 @@ export function runMultiModelDarkFlight(
   );
   const flare1Sounding = scaleSoundingWind(activeSounding, 1.22);
 
+  const activeTuning = stoneFit?.tuning || baselineTuning;
+  const effectiveGroundElevM = Number.isFinite(
+    Number(activeTuning.groundElevationM),
+  )
+    ? Number(activeTuning.groundElevationM)
+    : sensorBaseGroundElevationM;
+  const effectiveAblationSigma = Number.isFinite(
+    Number(activeTuning.ablationSigma),
+  )
+    ? Number(activeTuning.ablationSigma)
+    : 0.018;
+  const effectiveLateralImpulse = Number.isFinite(
+    Number(activeTuning.lateralImpulseCoeff),
+  )
+    ? Number(activeTuning.lateralImpulseCoeff)
+    : 0.55;
+  const effectiveLiftToDrag = Number.isFinite(
+    Number(activeTuning.liftToDragRatio),
+  )
+    ? Number(activeTuning.liftToDragRatio)
+    : 0;
+  const effectiveVerticalWindMs = Number.isFinite(
+    Number(activeTuning.verticalWindMs),
+  )
+    ? Number(activeTuning.verticalWindMs)
+    : 0;
+
   function buildSubBolideSweep(
     relLat,
     relLon,
@@ -1012,6 +1373,10 @@ export function runMultiModelDarkFlight(
           massKg: band.massKg,
           shapeFactor: relShape,
           sounding: relSounding,
+          groundElevationM: effectiveGroundElevM,
+          ablationSigma: effectiveAblationSigma,
+          liftToDragRatio: effectiveLiftToDrag,
+          verticalWindMs: effectiveVerticalWindMs,
           recordTrack: true,
         });
         if (!res) return null;
@@ -1026,6 +1391,12 @@ export function runMultiModelDarkFlight(
           massKg: band.massKg,
           shapeFactor: Math.max(0.8, relShape * 0.82),
           sounding: scaleSoundingWind(relSounding, 0.84),
+          groundElevationM: effectiveGroundElevM,
+          ablationSigma: effectiveAblationSigma,
+          lateralImpulseCoeff: effectiveLateralImpulse,
+          lateralAngleRad: Math.PI,
+          liftToDragRatio: effectiveLiftToDrag,
+          verticalWindMs: effectiveVerticalWindMs,
           recordTrack: false,
         });
 
@@ -1039,6 +1410,12 @@ export function runMultiModelDarkFlight(
           massKg: band.massKg,
           shapeFactor: relShape * 1.24,
           sounding: scaleSoundingWind(relSounding, 1.16),
+          groundElevationM: effectiveGroundElevM,
+          ablationSigma: effectiveAblationSigma,
+          lateralImpulseCoeff: effectiveLateralImpulse,
+          lateralAngleRad: 0,
+          liftToDragRatio: effectiveLiftToDrag,
+          verticalWindMs: effectiveVerticalWindMs,
           recordTrack: false,
         });
 
@@ -1144,6 +1521,16 @@ export function runMultiModelDarkFlight(
           rng.gaussian() * 0.15,
       ),
       sounding: useF1 ? flare1Sounding : activeSounding,
+      groundElevationM: effectiveGroundElevM,
+      ablationSigma: effectiveAblationSigma,
+      lateralImpulseCoeff: effectiveLateralImpulse,
+      lateralAngleRad: rng.next() * 2 * Math.PI,
+      liftToDragRatio: Math.max(
+        0,
+        effectiveLiftToDrag + Math.abs(rng.gaussian()) * 0.03,
+      ),
+      liftAzimuthRad: rng.next() * 2 * Math.PI,
+      verticalWindMs: effectiveVerticalWindMs + rng.gaussian() * 0.45,
       recordTrack: false,
     });
     if (imp) {
@@ -1228,6 +1615,31 @@ export function runMultiModelDarkFlight(
     }
   }
 
+  const darkFlightTracks = [
+    ...f2Sweep.map((b) => ({
+      episode: 'F2 (Terminal)',
+      massGrams: Math.round(b.massKg * 1000 * 10) / 10,
+      releaseAltKm: Math.round((effectiveAltM / 1000) * 10) / 10,
+      landingLat: b.lat,
+      landingLon: b.lon,
+      impactSpeedMs: b.impactSpeedMs,
+      impactEnergyJ: b.impactEnergyJ,
+      penetrationDepthCm: b.penetrationDepthCm,
+      ablationMassLossPct: b.ablationMassLossPct,
+    })),
+    ...f1Sweep.map((b) => ({
+      episode: 'F1 (Upper Flare)',
+      massGrams: Math.round(b.massKg * 1000 * 10) / 10,
+      releaseAltKm: Math.round((flare1AltM / 1000) * 10) / 10,
+      landingLat: b.lat,
+      landingLon: b.lon,
+      impactSpeedMs: b.impactSpeedMs,
+      impactEnergyJ: b.impactEnergyJ,
+      penetrationDepthCm: b.penetrationDepthCm,
+      ablationMassLossPct: b.ablationMassLossPct,
+    })),
+  ];
+
   const resultObj = {
     eventId: event.id,
     feasible: true,
@@ -1240,9 +1652,11 @@ export function runMultiModelDarkFlight(
       rawLat: Math.round(lat * 100000) / 100000,
       rawLon: Math.round(lon * 100000) / 100000,
       rawAltKm: Math.round((terminalAltM / 1000) * 100) / 100,
+      groundElevationM: Math.round(effectiveGroundElevM),
     },
     sounding,
     massSweep,
+    darkFlightTracks,
     monteCarloImpacts,
     ellipse2Sigma,
     ellipseInnerCore,

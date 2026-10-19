@@ -299,7 +299,7 @@ export function createMeteorPanel({
     const table = el('table', 'meteor-stone-table', content);
     const thead = el('thead', null, table);
     const headerTr = el('tr', null, thead);
-    for (const h of ['Stone', 'Mass (g)', 'Latitude', 'Longitude', 'Type', 'Fragment', 'Δ Residual', 'Actions']) {
+    for (const h of ['Stone', 'Mass (g)', 'Latitude', 'Longitude', 'Type', 'Fragment', 'Burial / V_imp', 'Δ Residual', 'Actions']) {
       el('th', null, headerTr).textContent = h;
     }
     const tbody = el('tbody', null, table);
@@ -350,6 +350,16 @@ export function createMeteorPanel({
       const fragCell = el('td', null, tr);
       fragCell.textContent = c.fragmentationEpisode || '';
 
+      const penCell = el('td', 'meteor-stone-error', tr);
+      const sim = c.simulated || {};
+      penCell.textContent =
+        sim.penetrationDepthCm != null && sim.impactSpeedMs != null
+          ? `${sim.penetrationDepthCm}cm @ ${sim.impactSpeedMs}m/s`
+          : '—';
+      if (sim.penetrationBySurface) {
+        penCell.title = `Impact Energy: ${sim.impactEnergyJ ?? 0} J · Soft soil: ${sim.penetrationBySurface.softSoilCm} cm · Grassland: ${sim.penetrationBySurface.grasslandCm} cm · Hardpan: ${sim.penetrationBySurface.hardpanCm} cm`;
+      }
+
       const errorM = el('td', 'meteor-stone-error', tr);
       errorM.textContent = `Δ ${c.errorM}m`;
 
@@ -367,7 +377,7 @@ export function createMeteorPanel({
     if (currentSelected) {
       const addTr = el('tr', 'meteor-stone-add-row', tbody);
       const addCell = el('td', null, addTr);
-      addCell.colSpan = 8;
+      addCell.colSpan = 9;
       const addBtn = btn('＋ Add Found Stone', 'meteor-stone-add-btn', t('Add a new found stone to this event'));
       addBtn.dataset.action = 'addStone';
       const resetBtn = btn('↺ Reset Stones & Fit', 'meteor-stone-add-btn', t('Reset found stones and tuning to documented baseline'));
@@ -413,6 +423,9 @@ export function createMeteorPanel({
       const gd = val.goesDiag;
       lines.push(`🛰 ${gd.satellite}: GLM 14km-ellipsoid parallax shift ${gd.parallaxShiftKm} km toward ${gd.parallaxBearingDeg}° · ${gd.abiBand7Swir}`);
     }
+    if (val.weibullCascade?.summary) {
+      lines.push(`💥 ${val.weibullCascade.summary}`);
+    }
     if (Array.isArray(val.sanityWarnings) && val.sanityWarnings.length > 0) {
       lines.push(`🔍 Sanity Checks: ${val.sanityWarnings.join(' | ')}`);
     }
@@ -428,7 +441,7 @@ export function createMeteorPanel({
     if (!df || !df.darkFlightTracks) return null;
     const { section, content } = makeSection(
       'mass-cascade',
-      t('Mass Cascade Tracks'),
+      t('Mass Cascade Tracks & Burial Depth'),
       'meteor-masscascade',
       false,
     );
@@ -436,7 +449,7 @@ export function createMeteorPanel({
     const table = el('table', 'meteor-param-table', content);
     const thead = el('thead', null, table);
     const hdrTr = el('tr', null, thead);
-    for (const h of ['Episode', 'Mass (g)', 'Release Alt (km)', 'Landing (lat, lon)']) {
+    for (const h of ['Episode', 'Mass (g)', 'V_imp / Energy', 'Burial (cm)', 'Landing (lat, lon)']) {
       el('th', null, hdrTr).textContent = h;
     }
     const tbody = el('tbody', null, table);
@@ -445,7 +458,12 @@ export function createMeteorPanel({
       const tr = el('tr', null, tbody);
       el('td', null, tr).textContent = tk.episode || 'n/a';
       el('td', null, tr).textContent = tk.massGrams || '';
-      el('td', null, tr).textContent = tk.releaseAltKm || '';
+      el('td', null, tr).textContent =
+        tk.impactSpeedMs != null
+          ? `${tk.impactSpeedMs} m/s (${Math.round(tk.impactEnergyJ || 0)} J)`
+          : '';
+      el('td', null, tr).textContent =
+        tk.penetrationDepthCm != null ? `${tk.penetrationDepthCm} cm` : '';
       const landingCell = el('td', null, tr);
       landingCell.textContent = tk.landingLat ? `${tk.landingLat.toFixed(4)}, ${tk.landingLon.toFixed(4)}` : 'n/a';
       if (tk.landingLat) {

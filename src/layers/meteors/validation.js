@@ -753,11 +753,17 @@ export function evaluateEventSanityAndOverUnder(
     );
   }
 
+  const weibullCascade = computeWeibullFractureCascade(event, aeroPhysics, {
+    opticalEntryMassKg,
+    nexrad,
+  });
+
   return {
     opticalEntryMassKg,
     acousticEntryMassKg,
     energyTonsTnt,
     aeroPhysics,
+    weibullCascade,
     cneosDiag,
     nexrad,
     nexradCoverage,
@@ -766,5 +772,73 @@ export function evaluateEventSanityAndOverUnder(
     pathCones,
     overUnder,
     sanityWarnings,
+  };
+}
+
+/**
+ * Compute Weibull size-dependent progressive fracture cascade
+ * (σ_frag = σ_0 * (m_0 / m)^α) across upper and terminal breakup flares.
+ */
+export function computeWeibullFractureCascade(
+  event,
+  aeroPhysics,
+  {
+    opticalEntryMassKg = null,
+    nexrad = null,
+    sigma0Mpa = 0.42,
+    weibullAlpha = 0.18,
+  } = {},
+) {
+  const parentMassKg = Math.max(
+    1,
+    Number(opticalEntryMassKg) || Number(event?.mass) || 77.1,
+  );
+  const pDynTerminalMpa = Math.max(
+    0.05,
+    Number(aeroPhysics?.ramPressureMpa) || 0.95,
+  );
+  const flareAltsKm =
+    Array.isArray(nexrad?.flareAltitudesKm) && nexrad.flareAltitudesKm.length >= 2
+      ? nexrad.flareAltitudesKm
+      : [
+          Math.round(((Number(aeroPhysics?.endAltKm) || 45.5) + 1.8) * 10) / 10,
+          Number(aeroPhysics?.endAltKm) || 45.5,
+        ];
+  const pDynUpperMpa = Math.max(0.04, Math.round(pDynTerminalMpa * 0.68 * 100) / 100);
+  const alpha = Math.max(0.08, Math.min(0.45, Number(weibullAlpha) || 0.18));
+  const s0 = Math.max(0.05, Number(sigma0Mpa) || 0.42);
+
+  // Weibull inversion: m_max(z) = m_0 * (σ_0 / P_dyn(z))^(1/α)
+  const maxChildUpperKg = Math.min(
+    parentMassKg * 0.25,
+    parentMassKg * Math.pow(s0 / Math.max(s0, pDynUpperMpa), 1 / alpha),
+  );
+  const maxChildTerminalKg = Math.min(
+    parentMassKg * 0.15,
+    parentMassKg * Math.pow(s0 / Math.max(s0, pDynTerminalMpa), 1 / alpha),
+  );
+
+  // Relative mass shedding split between Flare 1 (Upper) and Flare 2 (Terminal)
+  const f1Ratio =
+    pDynUpperMpa / Math.max(0.05, pDynUpperMpa + pDynTerminalMpa);
+  const flare1SharePct = Math.round(Math.max(18, Math.min(65, f1Ratio * 100)));
+  const flare2SharePct = 100 - flare1SharePct;
+  const powerLawExponent =
+    Math.round((1.65 + 0.18 * Math.min(2.5, pDynTerminalMpa / s0)) * 100) / 100;
+
+  return {
+    parentMassKg: Math.round(parentMassKg * 10) / 10,
+    sigma0Mpa: s0,
+    weibullAlpha: alpha,
+    flare1AltKm: flareAltsKm[0],
+    flare2AltKm: flareAltsKm[flareAltsKm.length - 1],
+    pDynUpperMpa,
+    pDynTerminalMpa,
+    flare1SharePct,
+    flare2SharePct,
+    maxChildUpperGrams: Math.max(5, Math.round(maxChildUpperKg * 1000)),
+    maxChildTerminalGrams: Math.max(5, Math.round(maxChildTerminalKg * 1000)),
+    powerLawExponent,
+    summary: `Weibull Cascade (σ₀=${s0} MPa, α=${alpha}): F1 (${flareAltsKm[0]} km, P_dyn=${pDynUpperMpa} MPa) sheds ${flare1SharePct}% of surviving mass · F2 (${flareAltsKm[flareAltsKm.length - 1]} km, P_dyn=${pDynTerminalMpa} MPa) sheds ${flare2SharePct}% (power-law β=${powerLawExponent})`,
   };
 }

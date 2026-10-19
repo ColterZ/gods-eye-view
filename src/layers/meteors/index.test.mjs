@@ -946,4 +946,155 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     assert.equal(df.validation.radarCheck.elapsedSec, 125);
     assert.ok(df.massSweep[0].underPoint && df.massSweep[0].overPoint);
   });
+
+  it('16. executes Stage 5 7-phase physics upgrades: groundElevationM cutoff, coupled ablation dm/dt, bow-shock lateral impulse, aerodynamic lift, vertical wind w, Poncelet burial depth, and Weibull fracture cascade', async () => {
+    const {
+      integrateFragmentDarkFlight,
+      computeBowShockLateralSpeedMs,
+      computeImpactPenetration,
+    } = await import('./darkFlight.js');
+    const { computeWeibullFractureCascade } = await import('./validation.js');
+
+    // Phase 1: Terrain Elevation Intersection (groundElevationM = 690m vs 0m)
+    const seaLevelImp = integrateFragmentDarkFlight({
+      terminalLat: 47.85,
+      terminalLon: -119.37,
+      terminalAltM: 28000,
+      terminalSpeedMs: 1200,
+      azimuthDeg: 0,
+      entryAngleDeg: 35,
+      massKg: 0.025,
+      sounding: sampleSounding,
+      groundElevationM: 0,
+      recordTrack: true,
+    });
+    const plateauImp = integrateFragmentDarkFlight({
+      terminalLat: 47.85,
+      terminalLon: -119.37,
+      terminalAltM: 28000,
+      terminalSpeedMs: 1200,
+      azimuthDeg: 0,
+      entryAngleDeg: 35,
+      massKg: 0.025,
+      sounding: sampleSounding,
+      groundElevationM: 690,
+      recordTrack: true,
+    });
+    assert.equal(plateauImp.groundElevationM, 690);
+    assert.equal(plateauImp.track.at(-1).altM, 690);
+    assert.ok(
+      plateauImp.flightTimeSec < seaLevelImp.flightTimeSec,
+      '690m plateau elevation terminates flight earlier than sea level',
+    );
+
+    // Phase 2: Coupled Hypersonic Ablation (dm/dt for v > 3 km/s)
+    const hyperAblated = integrateFragmentDarkFlight({
+      terminalLat: 47.85,
+      terminalLon: -119.37,
+      terminalAltM: 42000,
+      terminalSpeedMs: 5200,
+      azimuthDeg: 0,
+      entryAngleDeg: 35,
+      massKg: 0.1,
+      ablationSigma: 0.024,
+      ablateFromInitialMass: true,
+      sounding: sampleSounding,
+    });
+    assert.ok(hyperAblated.massKg < 0.1, 'hypersonic fragment loses mass via dm/dt');
+    assert.ok(hyperAblated.ablationMassLossPct > 0);
+    assert.ok(Number.isFinite(hyperAblated.darkFlightOnsetAltKm));
+
+    // Phase 3: Bow-Shock Transverse Fragmentation Impulse (v_perp scales with m^-1/6)
+    const vPerpSmall = computeBowShockLateralSpeedMs({
+      altM: 45500,
+      speedMs: 1200,
+      massKg: 0.01,
+      lateralImpulseCoeff: 0.55,
+    });
+    const vPerpLarge = computeBowShockLateralSpeedMs({
+      altM: 45500,
+      speedMs: 1200,
+      massKg: 1.0,
+      lateralImpulseCoeff: 0.55,
+    });
+    assert.ok(vPerpSmall > vPerpLarge, 'smaller fragments receive higher lateral impulse');
+
+    // Phase 4: Magnus / Aerodynamic Lift & Gliding (L/D > 0 shifts landing point)
+    const glidingImp = integrateFragmentDarkFlight({
+      terminalLat: 47.85,
+      terminalLon: -119.37,
+      terminalAltM: 28000,
+      terminalSpeedMs: 1200,
+      azimuthDeg: 0,
+      entryAngleDeg: 35,
+      massKg: 0.05,
+      liftToDragRatio: 0.12,
+      liftAzimuthRad: 0,
+      sounding: sampleSounding,
+    });
+    const noLiftImp = integrateFragmentDarkFlight({
+      terminalLat: 47.85,
+      terminalLon: -119.37,
+      terminalAltM: 28000,
+      terminalSpeedMs: 1200,
+      azimuthDeg: 0,
+      entryAngleDeg: 35,
+      massKg: 0.05,
+      liftToDragRatio: 0,
+      sounding: sampleSounding,
+    });
+    assert.notEqual(glidingImp.lon, noLiftImp.lon, 'non-zero liftToDragRatio displaces landing coordinate');
+
+    // Phase 5: Vertical Wind Updraft (w > 0 lengthens fall time and downwind drift)
+    const updraftImp = integrateFragmentDarkFlight({
+      terminalLat: 47.85,
+      terminalLon: -119.37,
+      terminalAltM: 20000,
+      terminalSpeedMs: 800,
+      azimuthDeg: 0,
+      entryAngleDeg: 45,
+      massKg: 0.01,
+      verticalWindMs: 2.5,
+      sounding: sampleSounding,
+    });
+    const zeroVertImp = integrateFragmentDarkFlight({
+      terminalLat: 47.85,
+      terminalLon: -119.37,
+      terminalAltM: 20000,
+      terminalSpeedMs: 800,
+      azimuthDeg: 0,
+      entryAngleDeg: 45,
+      massKg: 0.01,
+      verticalWindMs: 0,
+      sounding: sampleSounding,
+    });
+    assert.ok(updraftImp.flightTimeSec > zeroVertImp.flightTimeSec);
+
+    // Phase 6: Impact Terminal Velocity, Kinetic Energy & Poncelet Soil Penetration
+    const pen10g = computeImpactPenetration({
+      massKg: 0.01,
+      impactSpeedMs: 22,
+      impactAngleDeg: 78,
+    });
+    const pen1kg = computeImpactPenetration({
+      massKg: 1.0,
+      impactSpeedMs: 78,
+      impactAngleDeg: 82,
+    });
+    assert.ok(pen1kg.impactEnergyJ > pen10g.impactEnergyJ);
+    assert.ok(pen1kg.penetrationDepthCm > pen10g.penetrationDepthCm);
+    assert.ok(
+      pen1kg.penetrationBySurface.softSoilCm >
+        pen1kg.penetrationBySurface.hardpanCm,
+    );
+
+    // Phase 7: Weibull Progressive Fracture Cascade
+    const weibull = computeWeibullFractureCascade(
+      { mass: 77.1 },
+      { ramPressureMpa: 1.04, endAltKm: 45.5 },
+    );
+    assert.equal(weibull.flare1SharePct + weibull.flare2SharePct, 100);
+    assert.ok(weibull.powerLawExponent > 1.6);
+    assert.match(weibull.summary, /Weibull Cascade/);
+  });
 });

@@ -348,6 +348,12 @@ export function evaluateFoundStoneResiduals({
     ? tuning.speedScale
     : 1.0;
   const upperFlareOffsetKm = Number(tuning.upperFlareOffsetKm) || 0;
+  const groundElevationM = Number(tuning.groundElevationM) || 0;
+  const ablationSigma = Number.isFinite(Number(tuning.ablationSigma))
+    ? Number(tuning.ablationSigma)
+    : 0.018;
+  const liftToDragRatio = Number(tuning.liftToDragRatio) || 0;
+  const verticalWindMs = Number(tuning.verticalWindMs) || 0;
   const scaledSounding = scaleSoundingWind(sounding, windScale);
 
   const effAzDeg = (azimuthDeg + azDelta + 360) % 360;
@@ -391,6 +397,10 @@ export function evaluateFoundStoneResiduals({
       densityKgM3,
       shapeFactor,
       sounding: scaledSounding,
+      groundElevationM,
+      ablationSigma,
+      liftToDragRatio,
+      verticalWindMs,
       recordTrack,
       dtSec,
     });
@@ -418,6 +428,10 @@ export function evaluateFoundStoneResiduals({
         densityKgM3,
         shapeFactor: shapeFactor * 1.12,
         sounding: flare1Sounding,
+        groundElevationM,
+        ablationSigma,
+        liftToDragRatio,
+        verticalWindMs,
         recordTrack,
         dtSec,
       });
