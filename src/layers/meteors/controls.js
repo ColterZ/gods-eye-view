@@ -272,6 +272,22 @@ export function createControls({ layerState, services, components, config }) {
         }
       }
 
+      if (params.cycleGroundLabels === true) {
+        const order = ['compact', 'off', 'cards'];
+        const cur = layerState._groundLabelsMode || 'compact';
+        layerState._groundLabelsMode =
+          order[(order.indexOf(cur) + 1) % order.length];
+        components.rendering.renderDarkFlight();
+        changed = true;
+      } else if (
+        typeof params.groundLabelsMode === 'string' &&
+        ['compact', 'off', 'cards'].includes(params.groundLabelsMode)
+      ) {
+        layerState._groundLabelsMode = params.groundLabelsMode;
+        components.rendering.renderDarkFlight();
+        changed = true;
+      }
+
       if (params.playEventScene === true) {
         const sel = selectedEvent();
         if (sel && layerState._sceneDirector) {
@@ -462,6 +478,14 @@ export function createControls({ layerState, services, components, config }) {
               active: layerState._darkFlightMode === 'montecarlo',
               title: '160-fragment seeded Monte Carlo dispersion cloud + 2σ ellipse',
               params: { darkFlightMode: 'montecarlo' },
+            },
+            {
+              id: 'df-ground-labels',
+              label: `🏷 LABELS: ${(layerState._groundLabelsMode || 'compact').toUpperCase()}`,
+              active: (layerState._groundLabelsMode || 'compact') !== 'off',
+              title:
+                'Cycle ground object label density: COMPACT (non-obtrusive side pills) → OFF (pure geometry) → CARDS (full floating cards)',
+              params: { cycleGroundLabels: true },
             },
           );
           if (getFoundStonesForEvent(selected).length > 0) {
@@ -704,11 +728,15 @@ export function createControls({ layerState, services, components, config }) {
                 const stoneSummary = sf.comparisons
                   .map(
                     (c) =>
-                      `${c.stone.label} (${c.stone.massGrams}g): Δ=${c.errorM}m`,
+                      `${c.stone.label} (${c.stone.massGrams}g${c.fragmentationEpisode ? ` · ${c.fragmentationEpisode}` : ''}): Δ=${c.errorM}m`,
                   )
                   .join(' · ');
+                const flareNote =
+                  sf.tuning?.upperFlareOffsetKm > 0
+                    ? `, 2-flare breakup (F1 +${sf.tuning.upperFlareOffsetKm} km up-track + F2 terminus)`
+                    : '';
                 const tuneNote = sf.tuning
-                  ? ` [Auto-Fit: wind ${sf.tuning.windScale}×, shape ${sf.tuning.shapeFactor}, vel ${sf.tuning.speedScale ?? 1}×, az ${sf.tuning.azimuthDeltaDeg >= 0 ? '+' : ''}${sf.tuning.azimuthDeltaDeg}°${sf.terminusShiftM ? `, terminus Δ=${sf.terminusShiftM}m` : ''} → RMS ${sf.baselineRmsM}m → ${sf.bestRmsM}m]`
+                  ? ` [Auto-Fit: wind ${sf.tuning.windScale}×, shape ${sf.tuning.shapeFactor}, vel ${sf.tuning.speedScale ?? 1}×, az ${sf.tuning.azimuthDeltaDeg >= 0 ? '+' : ''}${sf.tuning.azimuthDeltaDeg}°${sf.terminusShiftM ? `, terminus Δ=${sf.terminusShiftM}m` : ''}${flareNote} → RMS ${sf.baselineRmsM}m → ${sf.bestRmsM}m]`
                   : ` [RMS ${sf.bestRmsM}m]`;
                 info += `\n◆ Found Stones (${sf.comparisons.length})${tuneNote}: ${stoneSummary}`;
               }

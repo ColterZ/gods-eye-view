@@ -38,7 +38,8 @@ export function createMeteorsState({ services, config }) {
 
   layerState._darkFlightActive = false;
   layerState._darkFlightMode = 'all';
-  layerState._darkFlightAutoFit = false;
+  layerState._darkFlightAutoFit = true;
+  layerState._groundLabelsMode = 'compact';
   layerState._darkFlightLoading = false;
   layerState._darkFlightResult = null;
   layerState._darkFlightEntities = [];

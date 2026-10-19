@@ -130,15 +130,36 @@ export function createRendering({ layerState, services, components, config }) {
       overlayHost.setVisible?.(METEORS_OVERLAY_SOURCE_ID, false);
       return;
     }
-    const entries = buildMeteorOverlayEntries(
-      layerState._renderedItems,
-      layerState._selectedEventId,
-    );
-    if (
+    const dfActiveForSelected =
       layerState._darkFlightActive &&
       layerState._darkFlightResult?.feasible &&
-      layerState._darkFlightResult.eventId === layerState._selectedEventId
-    ) {
+      layerState._darkFlightResult.eventId === layerState._selectedEventId;
+    const labelsMode = layerState._groundLabelsMode || 'compact';
+
+    // When Dark Flight is active in 'compact' or 'off' label mode, hide the giant
+    // multi-line floating HTML cards near the selected strewn field so they never
+    // obstruct the ground fall map, mass pins, NEXRAD gate, or found stones.
+    const baseItems =
+      dfActiveForSelected && labelsMode !== 'cards'
+        ? layerState._renderedItems.filter((item) => {
+            if (item.event.id === layerState._selectedEventId) return false;
+            const selEv = layerState._events.find(
+              (e) => e.id === layerState._selectedEventId,
+            );
+            if (
+              selEv?.possibleMatches?.some((m) => m.id === item.event.id)
+            ) {
+              return false;
+            }
+            return true;
+          })
+        : layerState._renderedItems;
+
+    const entries = buildMeteorOverlayEntries(
+      baseItems,
+      layerState._selectedEventId,
+    );
+    if (dfActiveForSelected && labelsMode === 'cards') {
       const df = layerState._darkFlightResult;
       const sweep = df.massSweep || [];
       if (sweep.length > 0 && layerState._darkFlightMode !== 'montecarlo') {
@@ -437,17 +458,38 @@ export function createRendering({ layerState, services, components, config }) {
           layerState._darkFlightEntities.push(marginEnt);
         }
 
+        const showCompactLabel =
+          (layerState._groundLabelsMode || 'compact') === 'compact';
         const impactEnt = layerState._dataSource.entities.add({
           id: `df:${df.eventId}:mass:${band.label}`,
           position: Cesium.Cartesian3.fromDegrees(band.lon, band.lat, 0),
           point: {
-            pixelSize: 9,
+            pixelSize: 8.5,
             color: bandColor,
             outlineColor: Cesium.Color.BLACK,
             outlineWidth: 2,
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
+          label: showCompactLabel
+            ? {
+                text: band.label,
+                font: '600 10px ui-monospace, SFMono-Regular, Menlo, monospace',
+                fillColor: bandColor,
+                outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 2,
+                style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                showBackground: true,
+                backgroundColor: new Cesium.Color(0.03, 0.05, 0.09, 0.68),
+                backgroundPadding: new Cesium.Cartesian2(4, 2),
+                horizontalOrigin: Cesium.HorizontalOrigin.RIGHT,
+                verticalOrigin: Cesium.VerticalOrigin.CENTER,
+                pixelOffset: new Cesium.Cartesian2(-10, 0),
+                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                scaleByDistance: new Cesium.NearFarScalar(2500, 1.0, 90000, 0.5),
+              }
+            : undefined,
         });
         layerState._darkFlightEntities.push(impactEnt);
       }
@@ -759,21 +801,62 @@ export function createRendering({ layerState, services, components, config }) {
       );
     }
 
-    // 3. Render Found Stones & Mass-Matched Residual Error Vectors
+    // 3. Render Found Stones & Mass-Matched Residual Error Vectors (with compact non-obtrusive pill labels)
     const stoneComparisons = df.stoneFit?.comparisons || [];
-    for (const comp of stoneComparisons) {
-      const { stone, simulated } = comp;
+    const showCompactStoneLabels =
+      (layerState._groundLabelsMode || 'compact') === 'compact';
+    const stoneOffsets = [
+      new Cesium.Cartesian2(10, -8),
+      new Cesium.Cartesian2(10, 8),
+      new Cesium.Cartesian2(-10, -8),
+      new Cesium.Cartesian2(10, 12),
+      new Cesium.Cartesian2(-10, 0),
+      new Cesium.Cartesian2(10, -10),
+    ];
+
+    for (let sIdx = 0; sIdx < stoneComparisons.length; sIdx++) {
+      const comp = stoneComparisons[sIdx];
+      const { stone, simulated, fragmentationEpisode } = comp;
+      const isF1 =
+        typeof fragmentationEpisode === 'string' &&
+        fragmentationEpisode.startsWith('F1');
+      const epBadge = isF1 ? '·F1' : '·F2';
+      const shortName = String(stone.label || '').replace(/\s*-\s*/, ' ');
+      const offset = stoneOffsets[sIdx % stoneOffsets.length];
+      const alignLeft = offset.x > 0;
+
       const stoneEnt = layerState._dataSource.entities.add({
         id: `df:${df.eventId}:stone:${stone.id}`,
         position: Cesium.Cartesian3.fromDegrees(stone.lon, stone.lat, 0),
         point: {
-          pixelSize: 11,
-          color: Cesium.Color.fromCssColorString('#10b981'),
+          pixelSize: 10,
+          color: Cesium.Color.fromCssColorString(isF1 ? '#34d399' : '#10b981'),
           outlineColor: Cesium.Color.WHITE,
-          outlineWidth: 2.5,
+          outlineWidth: 2,
           heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
+        label: showCompactStoneLabels
+          ? {
+              text: `◆ ${shortName}${epBadge} (Δ${comp.errorM}m)`,
+              font: '600 10px ui-monospace, SFMono-Regular, Menlo, monospace',
+              fillColor: Cesium.Color.fromCssColorString('#6ee7b7'),
+              outlineColor: Cesium.Color.BLACK,
+              outlineWidth: 2,
+              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+              showBackground: true,
+              backgroundColor: new Cesium.Color(0.02, 0.08, 0.06, 0.72),
+              backgroundPadding: new Cesium.Cartesian2(5, 2),
+              horizontalOrigin: alignLeft
+                ? Cesium.HorizontalOrigin.LEFT
+                : Cesium.HorizontalOrigin.RIGHT,
+              verticalOrigin: Cesium.VerticalOrigin.CENTER,
+              pixelOffset: offset,
+              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              scaleByDistance: new Cesium.NearFarScalar(2500, 1.0, 90000, 0.5),
+            }
+          : undefined,
       });
       layerState._darkFlightEntities.push(stoneEnt);
 
@@ -787,15 +870,42 @@ export function createRendering({ layerState, services, components, config }) {
               stone.lon,
               stone.lat,
             ]),
-            width: 2.5,
+            width: 2.0,
             material: new Cesium.PolylineDashMaterialProperty({
-              color: Cesium.Color.fromCssColorString('#f43f5e'),
-              dashLength: 12,
+              color: Cesium.Color.fromCssColorString(
+                isF1 ? '#38bdf8' : '#f43f5e',
+              ).withAlpha(0.85),
+              dashLength: 10,
             }),
             clampToGround: true,
           },
         });
         layerState._darkFlightEntities.push(resLine);
+
+        // If this stone detached from Episode F1 (Upper Flare), also render its
+        // 3D upper-flare dark-flight trajectory curve in dashed cyan-green
+        if (
+          isF1 &&
+          (mode === 'all' || mode === 'sweep') &&
+          Array.isArray(simulated.track) &&
+          simulated.track.length > 1
+        ) {
+          const f1TrackEnt = layerState._dataSource.entities.add({
+            id: `df:${df.eventId}:f1track:${stone.id}`,
+            polyline: {
+              positions: simulated.track.map((pt) =>
+                Cesium.Cartesian3.fromDegrees(pt.lon, pt.lat, pt.altM),
+              ),
+              width: 1.8,
+              material: new Cesium.PolylineDashMaterialProperty({
+                color: Cesium.Color.fromCssColorString('#34d399').withAlpha(0.7),
+                dashLength: 12,
+              }),
+              arcType: Cesium.ArcType.NONE,
+            },
+          });
+          layerState._darkFlightEntities.push(f1TrackEnt);
+        }
       }
     }
 

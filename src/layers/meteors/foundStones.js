@@ -244,7 +244,29 @@ export function evaluateFoundStoneResiduals({
   const speedScale = Number.isFinite(tuning.speedScale)
     ? tuning.speedScale
     : 1.0;
+  const upperFlareOffsetKm = Number(tuning.upperFlareOffsetKm) || 0;
   const scaledSounding = scaleSoundingWind(sounding, windScale);
+
+  const effAzDeg = (azimuthDeg + azDelta + 360) % 360;
+  const baseLat = terminalLat + latDeltaDeg;
+  const baseLon = terminalLon + lonDeltaDeg;
+  const baseAltM = Math.max(5000, terminalAltM + altDeltaM);
+  const cosLat = Math.max(0.05, Math.cos(baseLat * DEG_TO_RAD));
+
+  // If multi-stage fragmentation is active (upperFlareOffsetKm > 0), compute
+  // the Stage 1 (Upper Flare) release coordinate up-range along the reverse entry track.
+  const upRangeAzRad = ((effAzDeg + 180) % 360) * DEG_TO_RAD;
+  const elevRad = Math.max(10, Math.min(85, entryAngleDeg || 35)) * DEG_TO_RAD;
+  const flare1Lat =
+    baseLat +
+    ((upperFlareOffsetKm * 1000 * Math.cos(upRangeAzRad)) / METERS_PER_DEG_LAT);
+  const flare1Lon =
+    baseLon +
+    ((upperFlareOffsetKm * 1000 * Math.sin(upRangeAzRad)) /
+      (METERS_PER_DEG_LAT * cosLat));
+  const flare1AltM =
+    baseAltM + upperFlareOffsetKm * 1000 * Math.tan(elevRad);
+  const flare1Sounding = scaleSoundingWind(sounding, windScale * 1.22);
 
   const comparisons = [];
   let sumSq = 0;
@@ -253,12 +275,14 @@ export function evaluateFoundStoneResiduals({
   for (const stone of stones) {
     const massKg = Math.max(0.0005, stone.massGrams / 1000);
     const densityKgM3 = (stone.densityGcm3 || 3.35) * 1000;
-    const sim = integrateFragmentDarkFlight({
-      terminalLat: terminalLat + latDeltaDeg,
-      terminalLon: terminalLon + lonDeltaDeg,
-      terminalAltM: Math.max(5000, terminalAltM + altDeltaM),
+
+    // Episode F2: Main Terminal Breakup
+    const simF2 = integrateFragmentDarkFlight({
+      terminalLat: baseLat,
+      terminalLon: baseLon,
+      terminalAltM: baseAltM,
       terminalSpeedMs: terminalSpeedMs * speedScale,
-      azimuthDeg: (azimuthDeg + azDelta + 360) % 360,
+      azimuthDeg: effAzDeg,
       entryAngleDeg,
       massKg,
       densityKgM3,
@@ -266,17 +290,47 @@ export function evaluateFoundStoneResiduals({
       sounding: scaledSounding,
       recordTrack: true,
     });
-    if (!sim) continue;
+    if (!simF2) continue;
 
-    const dLatM = (stone.lat - sim.lat) * METERS_PER_DEG_LAT;
-    const dLonM =
-      (stone.lon - sim.lon) *
-      METERS_PER_DEG_LAT *
-      Math.max(0.01, Math.cos(stone.lat * DEG_TO_RAD));
-    const errorM = Math.round(Math.hypot(dLatM, dLonM));
-    const bearingDeg = Math.round(
-      (((Math.atan2(dLonM, dLatM) * 180) / Math.PI) % 360 + 360) % 360,
+    let bestSim = simF2;
+    let bestEpisode = 'F2 (Terminal)';
+    const dLatF2 = (stone.lat - simF2.lat) * METERS_PER_DEG_LAT;
+    const dLonF2 = (stone.lon - simF2.lon) * METERS_PER_DEG_LAT * cosLat;
+    let bestErrM = Math.round(Math.hypot(dLatF2, dLonF2));
+    let bestBearingDeg = Math.round(
+      (((Math.atan2(dLonF2, dLatF2) * 180) / Math.PI) % 360 + 360) % 360,
     );
+
+    // Episode F1: Upper Flare / Progressive Shedding (if enabled)
+    if (upperFlareOffsetKm > 0) {
+      const simF1 = integrateFragmentDarkFlight({
+        terminalLat: flare1Lat,
+        terminalLon: flare1Lon,
+        terminalAltM: Math.min(72000, flare1AltM),
+        terminalSpeedMs: terminalSpeedMs * speedScale * 0.72,
+        azimuthDeg: effAzDeg,
+        entryAngleDeg,
+        massKg,
+        densityKgM3,
+        shapeFactor: shapeFactor * 1.12,
+        sounding: flare1Sounding,
+        recordTrack: true,
+      });
+      if (simF1) {
+        const dLatF1 = (stone.lat - simF1.lat) * METERS_PER_DEG_LAT;
+        const dLonF1 = (stone.lon - simF1.lon) * METERS_PER_DEG_LAT * cosLat;
+        const errF1 = Math.round(Math.hypot(dLatF1, dLonF1));
+        if (errF1 < bestErrM) {
+          bestSim = simF1;
+          bestEpisode = 'F1 (Upper Flare)';
+          bestErrM = errF1;
+          bestBearingDeg = Math.round(
+            (((Math.atan2(dLonF1, dLatF1) * 180) / Math.PI) % 360 + 360) % 360,
+          );
+        }
+      }
+    }
+
     const diamCm =
       Math.round(
         2 *
@@ -284,13 +338,14 @@ export function evaluateFoundStoneResiduals({
           10,
       ) / 10;
 
-    sumSq += errorM * errorM;
-    sumDist += errorM;
+    sumSq += bestErrM * bestErrM;
+    sumDist += bestErrM;
     comparisons.push({
       stone: { ...stone, estDiameterCm: diamCm },
-      simulated: sim,
-      errorM,
-      bearingDeg,
+      simulated: bestSim,
+      fragmentationEpisode: bestEpisode,
+      errorM: bestErrM,
+      bearingDeg: bestBearingDeg,
     });
   }
 
@@ -384,42 +439,46 @@ export function autoFitDarkFlightToFoundStones({
   }
 
   // Stage 2: Fine-tune terminus release point (latDeltaDeg, lonDeltaDeg) jointly with
-  // speedScale & windScale within the camera 2σ terminus uncertainty cone (±2.0 km N/S, ±2.5 km E/W)
-  const latOffsets = [-0.015, -0.008, -0.003, 0, 0.004, 0.009];
-  const lonOffsets = [0, 0.014, 0.024, 0.032, 0.038];
-  const stage2Speeds = [0.65, 0.95, 1.25, 1.55];
+  // speedScale, windScale, and Multi-Stage Fragmentation (upperFlareOffsetKm for 2-flare breakups)
+  const latOffsets = [-0.012, -0.005, 0, 0.004, 0.008];
+  const lonOffsets = [0, 0.014, 0.024, 0.032];
+  const stage2Speeds = [0.75, 1.1, 1.45];
   const stage2Winds = [0.55, 0.8, 1.05];
+  const upperFlareOffsetsKm = stones.length >= 2 ? [0, 1.8, 2.8] : [0];
   const baseBest = { ...bestTuning };
 
   for (const latDeltaDeg of latOffsets) {
     for (const lonDeltaDeg of lonOffsets) {
       for (const speedScale of stage2Speeds) {
         for (const windScale of stage2Winds) {
-          const tuning = {
-            ...baseBest,
-            windScale,
-            speedScale,
-            latDeltaDeg,
-            lonDeltaDeg,
-            altDeltaKm: 0,
-          };
-          const res = evaluateFoundStoneResiduals({
-            stones,
-            terminalLat,
-            terminalLon,
-            terminalAltM,
-            terminalSpeedMs,
-            azimuthDeg,
-            entryAngleDeg,
-            sounding,
-            tuning,
-          });
-          if (
-            res.rmsErrorM !== null &&
-            (bestEval.rmsErrorM === null || res.rmsErrorM < bestEval.rmsErrorM)
-          ) {
-            bestEval = res;
-            bestTuning = tuning;
+          for (const upperFlareOffsetKm of upperFlareOffsetsKm) {
+            const tuning = {
+              ...baseBest,
+              windScale,
+              speedScale,
+              latDeltaDeg,
+              lonDeltaDeg,
+              altDeltaKm: 0,
+              upperFlareOffsetKm,
+            };
+            const res = evaluateFoundStoneResiduals({
+              stones,
+              terminalLat,
+              terminalLon,
+              terminalAltM,
+              terminalSpeedMs,
+              azimuthDeg,
+              entryAngleDeg,
+              sounding,
+              tuning,
+            });
+            if (
+              res.rmsErrorM !== null &&
+              (bestEval.rmsErrorM === null || res.rmsErrorM < bestEval.rmsErrorM)
+            ) {
+              bestEval = res;
+              bestTuning = tuning;
+            }
           }
         }
       }
