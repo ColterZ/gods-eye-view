@@ -1014,22 +1014,32 @@ export function analyzePngCompositeStreak(
   const ux = Math.cos(theta);
   const uy = Math.sin(theta);
 
-  // Project points onto streak axis to find endpoints (tMin, tMax) and 10-bin light curve
-  let tMin = Infinity;
-  let tMax = -Infinity;
+  // Project points onto streak axis (tProj) and normal axis (nProj)
+  const nx = -uy;
+  const ny = ux;
   for (const p of brightPts) {
-    const tProj = (p.x - mx) * ux + (p.y - my) * uy;
-    p.tProj = tProj;
-    if (tProj < tMin) tMin = tProj;
-    if (tProj > tMax) tMax = tProj;
+    p.tProj = (p.x - mx) * ux + (p.y - my) * uy;
+    p.nProj = (p.x - mx) * nx + (p.y - my) * ny;
   }
 
-  const streakLengthPx = Math.round(Math.max(1, tMax - tMin) * 10) / 10;
+  // Filter strictly to the bolide streak ridge corridor (|nProj| <= 5.5 px)
+  // to reject unrelated bright stars, moon, or horizon dome artifacts.
+  const ridgePts = brightPts.filter((p) => Math.abs(p.nProj) <= 5.5);
+  if (ridgePts.length < 5) return null;
+
+  let tMin = Infinity;
+  let tMax = -Infinity;
+  for (const p of ridgePts) {
+    if (p.tProj < tMin) tMin = p.tProj;
+    if (p.tProj > tMax) tMax = p.tProj;
+  }
+
+  const streakLengthPx = Math.round(Math.max(1, tMax - tMin) * 100) / 100;
   if (streakLengthPx < 8) return null;
-  const x1 = Math.round(mx + tMin * ux);
-  const y1 = Math.round(my + tMin * uy);
-  const x2 = Math.round(mx + tMax * ux);
-  const y2 = Math.round(my + tMax * uy);
+  const x1 = Math.round((mx + tMin * ux) * 100) / 100;
+  const y1 = Math.round((my + tMin * uy) * 100) / 100;
+  const x2 = Math.round((mx + tMax * ux) * 100) / 100;
+  const y2 = Math.round((my + tMax * uy) * 100) / 100;
 
   // All-sky fisheye azimuth (0°=N top, 90°=E right) & elevation (90° at center, 0° at rDome)
   const pixelToSky = (px, py) => {
@@ -1043,17 +1053,37 @@ export function analyzePngCompositeStreak(
   const skyStart = pixelToSky(x1, y1);
   const skyEnd = pixelToSky(x2, y2);
 
-  // Sample 16 bins along the streak to find 0..5 distinct flare peaks along the light curve
+  // Sample 16 bins along the streak ridge for subpixel centroiding & 0..5 flare peak detection
   const nBins = 16;
   const binEnergy = new Float32Array(nBins);
-  for (const p of brightPts) {
+  const binNormSum = new Float32Array(nBins);
+  const binNormSqSum = new Float32Array(nBins);
+  for (const p of ridgePts) {
     const frac = Math.min(
       0.999,
       Math.max(0, (p.tProj - tMin) / Math.max(1, tMax - tMin)),
     );
     const bIdx = Math.floor(frac * nBins);
     binEnergy[bIdx] += p.w;
+    binNormSum[bIdx] += p.w * p.nProj;
+    binNormSqSum[bIdx] += p.w * p.nProj * p.nProj;
   }
+
+  // Subpixel cross-track centroid RMS residual (hundredths of a pixel)
+  let centroidSqSum = 0;
+  let activeSlices = 0;
+  for (let i = 0; i < nBins; i++) {
+    if (binEnergy[i] > 0) {
+      const nCentroid = binNormSum[i] / binEnergy[i];
+      centroidSqSum += nCentroid * nCentroid;
+      activeSlices++;
+    }
+  }
+  const subpixelRmsPx =
+    activeSlices > 0
+      ? Math.round(Math.sqrt(centroidSqSum / activeSlices) * 100) / 100
+      : 0.08;
+
   const meanBin =
     binEnergy.reduce((acc, v) => acc + v, 0) / Math.max(1, nBins);
   let peakBin = 0;
@@ -1063,7 +1093,13 @@ export function analyzePngCompositeStreak(
     const prev = i > 0 ? binEnergy[i - 1] : 0;
     const next = i < nBins - 1 ? binEnergy[i + 1] : 0;
     if (binEnergy[i] >= meanBin * 1.45 && binEnergy[i] >= prev && binEnergy[i] > next) {
-      const f = Math.round(((i + 0.5) / nBins) * 100) / 100;
+      // Parabolic sub-bin interpolation: delta = 0.5 * (prev - next) / (prev - 2*cur + next)
+      const denom = prev - 2 * binEnergy[i] + next;
+      const subShift =
+        Math.abs(denom) > 1e-4
+          ? Math.max(-0.45, Math.min(0.45, (0.5 * (prev - next)) / denom))
+          : 0;
+      const f = Math.round(((i + 0.5 + subShift) / nBins) * 1000) / 1000;
       localPeaks.push({
         fraction: f,
         impliedAltKm:
@@ -1076,6 +1112,32 @@ export function analyzePngCompositeStreak(
   const impliedFlareAltKm =
     Math.round((startAltKm - peakFlareFrac * (startAltKm - endAltKm)) * 10) / 10;
 
+  // Post-Bolide Deceleration Ember Tail & Wake Splitting Analysis (s > peakFlareFrac):
+  // Measures surviving incandescent macro-fragments continuing down-track past the main flare
+  // and transverse wake broadening (fragment splitting v_perp) before dark-flight cooling.
+  const postFlareFracSpan = Math.round(Math.max(0, 1 - peakFlareFrac) * 100) / 100;
+  const postBolideTailPx = Math.round(streakLengthPx * postFlareFracSpan * 10) / 10;
+  const postBolideAltDropKm =
+    Math.round(Math.max(0, impliedFlareAltKm - endAltKm) * 10) / 10;
+
+  let preW = 0,
+    preN2 = 0,
+    postW = 0,
+    postN2 = 0;
+  for (let i = 0; i < nBins; i++) {
+    if (i < peakBin) {
+      preW += binEnergy[i];
+      preN2 += binNormSqSum[i];
+    } else if (i > peakBin) {
+      postW += binEnergy[i];
+      postN2 += binNormSqSum[i];
+    }
+  }
+  const preWidthPx = preW > 0 ? Math.sqrt(preN2 / preW) : 1.0;
+  const postWidthPx = postW > 0 ? Math.sqrt(postN2 / postW) : preWidthPx;
+  const wakeExpansionRatio =
+    Math.round((postWidthPx / Math.max(0.4, preWidthPx)) * 100) / 100;
+
   return {
     width,
     height,
@@ -1084,12 +1146,17 @@ export function analyzePngCompositeStreak(
     streakStartPx: [x1, y1],
     streakEndPx: [x2, y2],
     streakLengthPx,
+    subpixelRmsPx,
     skyAzimuthSpanDeg: [skyStart.azDeg, skyEnd.azDeg],
     skyElevationSpanDeg: [skyStart.elDeg, skyEnd.elDeg],
     peakFlareFraction: peakFlareFrac,
     impliedFlareAltKm,
     detectedFlareCount: localPeaks.length,
     detectedFlares: localPeaks.slice(0, 5),
+    postBolideTailPx,
+    postBolideAltDropKm,
+    wakeExpansionRatio,
+    postBolideEmbersDetected: postBolideTailPx >= 8 && postW > meanBin * 0.5,
   };
 }
 

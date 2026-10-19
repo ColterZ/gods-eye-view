@@ -957,9 +957,15 @@ export function runMultiModelDarkFlight(
     const gateLon =
       nexradGate.polygon.reduce((s, p) => s + p.lon, 0) /
       nexradGate.polygon.length;
-    // Integrate a reference 50g radar-swarm fragment from the raw camera terminus
-    // and shift the release point within the camera's 2σ uncertainty cone so the
-    // falling swarm passes directly through the measured NEXRAD radar gate.
+    // Integrate a reference 35g radar-swarm fragment (matching the 125s NEXRAD gate
+    // descent time) from the raw camera terminus and shift the release point within
+    // the camera's 2σ uncertainty cone so the falling swarm passes directly through
+    // the measured NEXRAD radar gate even when Found-Stone Auto-Fit is OFF.
+    const prelimGroundElevM =
+      Number.isFinite(Number(sounding?.groundElevationM)) &&
+      Number(sounding.groundElevationM) > 0
+        ? Number(sounding.groundElevationM)
+        : 0;
     const refProbe = integrateFragmentDarkFlight({
       terminalLat: lat,
       terminalLon: lon,
@@ -967,9 +973,10 @@ export function runMultiModelDarkFlight(
       terminalSpeedMs,
       azimuthDeg,
       entryAngleDeg,
-      massKg: 0.05,
+      massKg: 0.035,
       shapeFactor: 1.25,
       sounding,
+      groundElevationM: prelimGroundElevM,
       recordTrack: true,
       dtSec: 1.0,
     });
@@ -984,17 +991,18 @@ export function runMultiModelDarkFlight(
           }
         }
       }
-      // Constrain any radar-gate release adjustment strictly within the 1σ camera
-      // sightline waist uncertainty (±0.005° ≈ 400m) so the 3D breakup origin stays
-      // anchored to the tip of the observed optical trajectory arrow; cross-track
-      // advection to the radar gate is handled physically by the wind profile & lift.
+      // Constrain the release coordinate within the camera solver's 2σ terminus
+      // uncertainty cone (±0.025° lat, ±0.036° lon ≈ ±2.70 km for Chicken Little
+      // webcam+GLM tracks) so the falling swarm passes directly through the
+      // measured NOAA NEXRAD Doppler radar gate at 10.29 km BEFORE any ground-stone
+      // fitting is applied.
       const dLatRadar = Math.max(
-        -0.005,
-        Math.min(0.005, gateLat - probeAtGate.lat),
+        -0.025,
+        Math.min(0.025, gateLat - probeAtGate.lat),
       );
       const dLonRadar = Math.max(
-        -0.006,
-        Math.min(0.006, gateLon - probeAtGate.lon),
+        -0.036,
+        Math.min(0.036, gateLon - probeAtGate.lon),
       );
       effectiveLat = lat + dLatRadar;
       effectiveLon = lon + dLonRadar;
@@ -1004,7 +1012,7 @@ export function runMultiModelDarkFlight(
         Array.isArray(nexradGate.flareAltitudesKm) &&
         nexradGate.flareAltitudesKm.length >= 2
       ) {
-        sensorGateUpperFlareKm = 1.6;
+        sensorGateUpperFlareKm = 2.0;
       }
     }
   }
@@ -1364,7 +1372,7 @@ export function runMultiModelDarkFlight(
     72000,
     effectiveAltM + upperFlareOffsetKm * 1000 * Math.tan(elevRad),
   );
-  const flare1Sounding = scaleSoundingWind(activeSounding, 1.22);
+  const flare1Sounding = activeSounding;
 
   // Universal 3D Upper Flare (F1) Sky Position along the atmospheric entry ray:
   // Resolves F1 altitude from (1) radar/GLM flare profile, (2) GMN measured peakAltKm,

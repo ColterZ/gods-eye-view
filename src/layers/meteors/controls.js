@@ -94,20 +94,6 @@ export function createControls({ layerState, services, components, config }) {
     }
 
     layerState._darkFlightLoading = true;
-    // Render an immediate synchronous Dark-Flight pass so visuals appear instantly
-    // while the historical upper-air wind sounding resolves in the background.
-    if (
-      !layerState._darkFlightResult ||
-      layerState._darkFlightResult.eventId !== targetId
-    ) {
-      layerState._darkFlightResult = runMultiModelDarkFlight(ev, null, {
-        allEvents: layerState._events,
-        autoFit: false,
-        customTuning: layerState._customTuning,
-      });
-      components.rendering.renderDarkFlight();
-      if (fly) flyToEvent(targetId);
-    }
     layerState.notify();
     try {
       const asgardPartner =
@@ -121,12 +107,33 @@ export function createControls({ layerState, services, components, config }) {
         (!asgardPartner.sightlineSummary || !asgardPartner.nasaRetrievedClaims) &&
         typeof components.source.fetchAsgardEventEnrichment === 'function';
 
-      const [sounding, enrichedAsgard, seismicData] = await Promise.all([
-        components.source.fetchSounding({
-          lat: ev.location.lat,
-          lon: ev.location.lon,
-          timeIso: ev.eventTime,
-        }),
+      // Step 1: Fetch the historical upper-air wind sounding FIRST (~80ms) and render
+      // immediately so Dark Flight ALWAYS uses real historical wind data from the first
+      // frame, without waiting 6-10s on IRIS miniSEED waveforms or sub-map HTML.
+      const sounding = await components.source.fetchSounding({
+        lat: ev.location.lat,
+        lon: ev.location.lon,
+        timeIso: ev.eventTime,
+      });
+      if (
+        layerState._destroyed ||
+        !layerState._darkFlightActive ||
+        layerState._selectedEventId !== targetId
+      ) {
+        return;
+      }
+      layerState._darkFlightResult = runMultiModelDarkFlight(ev, sounding, {
+        allEvents: layerState._events,
+        autoFit: layerState._darkFlightAutoFit,
+        customTuning: layerState._customTuning,
+      });
+      components.rendering.renderDarkFlight();
+      if (fly) flyToEvent(targetId);
+      layerState.notify();
+
+      // Step 2: Fetch ASGARD sub-map sightlines/media and IRIS miniSEED seismic waveforms
+      // in parallel and enrich the active Dark Flight validation when they arrive.
+      const [enrichedAsgard, seismicData] = await Promise.all([
         needsAsgardEnrichment
           ? components.source.fetchAsgardEventEnrichment(
               asgardPartner.eventId || asgardPartner.id,
@@ -144,9 +151,6 @@ export function createControls({ layerState, services, components, config }) {
             })
           : Promise.resolve(null),
       ]);
-      if (enrichedAsgard && asgardPartner) {
-        Object.assign(asgardPartner, enrichedAsgard);
-      }
       if (
         layerState._destroyed ||
         !layerState._darkFlightActive ||
@@ -154,16 +158,18 @@ export function createControls({ layerState, services, components, config }) {
       ) {
         return;
       }
-      layerState._darkFlightResult = runMultiModelDarkFlight(ev, sounding, {
-        allEvents: layerState._events,
-        autoFit: layerState._darkFlightAutoFit,
-        customTuning: layerState._customTuning,
-      });
+      if (enrichedAsgard && asgardPartner) {
+        Object.assign(asgardPartner, enrichedAsgard);
+        layerState._darkFlightResult = runMultiModelDarkFlight(ev, sounding, {
+          allEvents: layerState._events,
+          autoFit: layerState._darkFlightAutoFit,
+          customTuning: layerState._customTuning,
+        });
+      }
       if (seismicData && layerState._darkFlightResult?.validation) {
         layerState._darkFlightResult.validation.seismic = seismicData;
       }
       components.rendering.renderDarkFlight();
-      if (fly) flyToEvent(targetId);
     } finally {
       if (layerState._selectedEventId === targetId) {
         layerState._darkFlightLoading = false;

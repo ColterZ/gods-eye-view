@@ -396,9 +396,10 @@ export function evaluateFoundStoneResiduals({
       (METERS_PER_DEG_LAT * cosLat));
   const flare1AltM =
     baseAltM + upperFlareOffsetKm * 1000 * Math.tan(elevRad);
+  // Use the exact same physical wind sounding for F1 and F2 (no artificial wind multiplier)
   const flare1Sounding = scaleSoundingWind(
     sounding,
-    windScale * 1.22,
+    windScale,
     windDirDeltaDeg,
   );
 

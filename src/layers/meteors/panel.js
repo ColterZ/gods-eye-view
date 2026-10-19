@@ -527,7 +527,7 @@ export function createMeteorPanel({
           if (item.frameAnalysis) {
             const fa = item.frameAnalysis;
             parts.push(
-              `Streak ${fa.streakLengthPx}px · Az ${fa.skyAzimuthSpanDeg[0]}°→${fa.skyAzimuthSpanDeg[1]}° · Flare @ ${Math.round(fa.peakFlareFraction * 100)}% (${fa.impliedFlareAltKm} km)`,
+              `Streak ${fa.streakLengthPx}px (σ=${fa.subpixelRmsPx}px) · Az ${fa.skyAzimuthSpanDeg[0]}°→${fa.skyAzimuthSpanDeg[1]}° · ${fa.detectedFlareCount || 1} Flare(s) @ ${Math.round(fa.peakFlareFraction * 100)}% (${fa.impliedFlareAltKm} km)${fa.postBolideEmbersDetected ? ` · Post-Flare Tail ${fa.postBolideTailPx}px (-${fa.postBolideAltDropKm} km, wake ${fa.wakeExpansionRatio}×)` : ''}`,
             );
           }
           metaDiv.textContent = parts.join(' · ');
