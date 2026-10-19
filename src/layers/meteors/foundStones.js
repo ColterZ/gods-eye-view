@@ -877,18 +877,27 @@ export function autoFitDarkFlightToFoundStones({
   let bestEval = baseline;
   const cosLat = Math.max(0.05, Math.cos(terminalLat * DEG_TO_RAD));
 
+  // Bug #7 fix: When fewer than 2 stones exist, autoFit over-tunes the trajectory
+  // to shift the entire strewn field to match one stone, degrading the deterministic
+  // spine. Instead, constrain latDelta/lonDelta to ±0.0002° (~22m, ~50m) and use
+  // tighter wind regularization so the raw physics solution is preserved as baseline.
+  const singleStoneMode = stones.length < 2;
+
   // Tikhonov Bayesian prior regularization penalty (meters):
   // Multi-camera sightlines tightly constrain the 3D trajectory line (cross-track σ ≈ 350m,
   // azimuth σ ≈ 1.5°), whereas reanalysis wind profiles and fragment drag/release along the
   // flare column carry the true dark-flight uncertainty. Penalize shifting or rotating the
   // starting trajectory so the solver fits via wind/aerodynamics/along-track release first.
+  // Bug #7 fix: Strengthen trajectory-shift penalty in single-stone mode to preserve
+  // the deterministic spine as the baseline (prevent over-tuning to one data point).
+  const shiftPenaltyWeight = singleStoneMode ? 0.85 : 0.55;
   const computeRegularizedObjective = (rmsM, t) => {
     const shiftM = Math.hypot(
       (t.latDeltaDeg || 0) * METERS_PER_DEG_LAT,
       (t.lonDeltaDeg || 0) * METERS_PER_DEG_LAT * cosLat,
     );
-    const azPenM = Math.abs(t.azimuthDeltaDeg || 0) * 45;
-    const shiftPenM = shiftM * 0.55;
+    const azPenM = Math.abs(t.azimuthDeltaDeg || 0) * 95;
+    const shiftPenM = shiftM * shiftPenaltyWeight;
     const windPenM = Math.abs((t.windScale || 1) - initialTuning.windScale) * 25;
     return rmsM + azPenM + shiftPenM + windPenM;
   };
@@ -942,9 +951,9 @@ export function autoFitDarkFlightToFoundStones({
   // Stage 2: Sightline-Constrained Along-Track Flare Release & Micro-Refinement
   // Keeps trajectory heading within camera 1σ (0°..+1.5°) and terminus within ±250m,
   // while testing multi-stage progressive fragmentation (upperFlareOffsetKm) along the track.
-  const latOffsets = [-0.002, 0, 0.002];
-  const lonOffsets = [-0.002, 0, 0.002];
-  const azDeltas = [0, 1.0];
+  const latOffsets = singleStoneMode ? [0] : [-0.002, 0, 0.002];
+  const lonOffsets = singleStoneMode ? [0] : [-0.002, 0, 0.002];
+  const azDeltas = singleStoneMode ? [0] : [0, 1.0];
   const upperFlareOffsetsKm =
     stones.length >= 2
       ? Array.from(new Set([initialTuning.upperFlareOffsetKm, 0, 3.2, 6.4]))

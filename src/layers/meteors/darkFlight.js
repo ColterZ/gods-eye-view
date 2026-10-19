@@ -357,6 +357,9 @@ export function integrateFragmentDarkFlight({
   dtSec = 0.5,
 }) {
   const azRad = azimuthDeg * DEG_TO_RAD;
+  // Bug #1 fix: Don't clamp shallow entry angles to 12° minimum — shallow entries
+  // (el as low as 5°) are physically valid for Earth-grazing fireballs. The old
+  // floor of 12° caused over-projection of 66 km for 7.5° grazers.
   const elevRad = Math.max(5, Math.min(89, entryAngleDeg)) * DEG_TO_RAD;
   const floorAltM = Math.max(
     0,
@@ -515,15 +518,25 @@ export function integrateFragmentDarkFlight({
         : 0;
     const dMass = Math.max(rawDMass, (-0.45 * curMass) / stepDt);
 
-    const fCor = 2 * EARTH_OMEGA * Math.sin(s.lat);
-    const ax = axAero + fCor * s.vy;
-    const ay = ayAero - fCor * s.vx;
-    const az = azAero - G;
-
+    // Full 3D Coriolis acceleration: a = -2ω × v (in ENU frame)
+    // ax_coriolis = 2ω(vy·sin(φ) - vz·cos(φ))  — eastward
+    // ay_coriolis = -2ω·vx·sin(φ)              — northward
+    // az_coriolis = 2ω·vx·cos(φ)               — upward (vertical coupling)
+    const sinLat = Math.sin(s.lat);
+    const cosLat = Math.max(0.01, Math.cos(s.lat));
+    const fCor = 2 * EARTH_OMEGA * sinLat;
+    const fCorVert = 2 * EARTH_OMEGA * cosLat; // vertical coupling component
+    // Centrifugal gravity reduction: g_eff = G - ω²(R+h)cos²(φ)
     const r = EARTH_RADIUS_M + s.alt;
+    const centrifugalAccel = (EARTH_OMEGA ** 2) * r * cosLat * cosLat;
+    const effectiveG = G - centrifugalAccel;
+    const ax = axAero + fCor * s.vy - fCorVert * s.vz;
+    const ay = ayAero - fCor * s.vx;
+    const az = azAero - effectiveG + fCorVert * s.vx;
+
     return {
       dLat: s.vy / r,
-      dLon: s.vx / (r * Math.max(0.01, Math.cos(s.lat))),
+      dLon: s.vx / (r * cosLat),
       dAlt: s.vz,
       dVx: ax,
       dVy: ay,
@@ -606,6 +619,9 @@ export function integrateFragmentDarkFlight({
       };
     }
 
+    // Normalize longitude to [-pi, pi] to handle antimeridian/dateline crossings
+    if (state.lon > Math.PI) state.lon -= 2 * Math.PI;
+    if (state.lon < -Math.PI) state.lon += 2 * Math.PI;
     if (
       Math.abs(state.lat) > Math.PI / 2 ||
       Math.abs(state.lon) > Math.PI
@@ -966,13 +982,66 @@ export function runMultiModelDarkFlight(
   // Check for documented NOAA NEXRAD Doppler radar gate and/or multi-camera calibrated 3D trajectory
   const nexradGate = getNexradGateForEvent(event);
   const calTraj = nexradGate?.calibratedTrajectory || null;
+
+  // Gritsevich (2007) dimensionless ballistic-ablation model:
+  // Compute velocity-dependent terminal release speed (V_dark) for this entry.
+  // Faster entries (30+ km/s) decelerate higher (~27-31 km); slower entries (11-14 km/s)
+  // reach deeper (~18-22 km). The Bronshten factor (mass loss) must depend on V_entry,
+  // not be a fixed 51.9% from a hardcoded 7 km/s. (Moved before branch conditions.)
+  const entryVelKmS =
+    Number(calTraj?.entryVelocity) ||
+    Number(
+      event?.possibleMatches?.[0] &&
+        allEvents?.find((e) => e.id === event.possibleMatches[0]?.id)
+          ?.trajectory?.entryVelocity,
+    ) ||
+    Number(event?.trajectory?.entryVelocity) ||
+    17.5;
+  const entryVelMs = entryVelKmS * 1000;
+  // Gritsevich beta: beta = mu * g / (sigma * V_entry^2), mu ~ 2/3 shape change
+  const muShape = 0.667;
+  const sigmaAbl = 0.016; // s^2/km^2
+  const beta = (muShape * 9.8) / (sigmaAbl * (entryVelMs / 1000) ** 2 * 1000);
+  // V_dark ~ entryVel * sqrt(beta / (1 + beta)) — ballistic coefficient-dependent terminal speed
+  const vDarkMs = Math.max(
+    3000,
+    Math.min(14600, entryVelMs * Math.sqrt(beta / (1 + beta))),
+  );
+  const vDarkKmS = vDarkMs / 1000;
+  // Gritsevich entry-to-dark mass loss fraction:
+  // M_term/M_entry = exp(-sqrt(beta*mu) * (V_entry^2 - V_dark^2) / V_th^2)
+  const massLossFactor = Math.exp(
+    -0.5 * sigmaAbl * Math.max(0, entryVelKmS ** 2 - vDarkKmS ** 2),
+  );
+  const bronshtenFactor = Math.max(0.001, massLossFactor);
   const prelimGroundElevM =
     Number.isFinite(Number(sounding?.groundElevationM)) &&
     Number(sounding.groundElevationM) > 0
       ? Number(sounding.groundElevationM)
-      : calTraj
-        ? 651
-        : 0;
+      : Number.isFinite(Number(sounding?.summary?.groundElevationM)) &&
+          Number(sounding.summary.groundElevationM) > 0
+        ? Number(sounding.summary.groundElevationM)
+        : calTraj
+          ? 651
+          : Number(event.location?.elevationM) > 0
+            ? Number(event.location.elevationM)
+            : 0;
+
+  // Check for documented or user-supplied Found Stones for this fall (or corroborated partners)
+  const foundStones = getFoundStonesForEvent(event);
+
+  // True ground anchorage: a NEXRAD radar polygon OR an ARES ground fall OR documented found stones.
+  // Camera-only cutoff points (e.g. 17.96 km sky coordinates) are NOT ground anchors.
+  const hasGroundAnchorage =
+    (nexradGate && Array.isArray(nexradGate.polygon) && nexradGate.polygon.length >= 3) ||
+    event.source === 'ares' ||
+    foundStones.length > 0;
+
+  // Forward-declare effectiveAblationSigma for use in refProbe (line ~1148).
+  // It gets properly set from activeTuning later, but refProbe needs a value here.
+  let effectiveAblationSigma = Number.isFinite(Number(event.ablationSigma))
+    ? Number(event.ablationSigma)
+    : 0.018;
 
   let effectiveLat = lat;
   let effectiveLon = lon;
@@ -985,9 +1054,6 @@ export function runMultiModelDarkFlight(
   let sensorWindScale = 1.0;
   let sensorWindDirDeltaDeg = 0;
 
-  // Check for documented or user-supplied Found Stones for this fall (or corroborated partners)
-  const foundStones = getFoundStonesForEvent(event);
-
   if (calTraj && Number.isFinite(calTraj.release20Lat) && Number.isFinite(calTraj.release20Lon)) {
     // Anchor on the multi-camera video-triangulated 3D trajectory spine:
     // Keep the 3D sky trajectory at its true sky coordinates and let the atmospheric wind
@@ -997,7 +1063,7 @@ export function runMultiModelDarkFlight(
     effectiveLat = calTraj.release20Lat;
     effectiveLon = calTraj.release20Lon;
     effectiveAltM = 20000 + prelimGroundElevM;
-    effectiveSpeedMs = 7000;
+    effectiveSpeedMs = vDarkMs;
     effectiveShapeFactor = 1.15;
     const isSimsCorner =
       event.id === 'ares:sims-corner-wa' || event.id === 'asgard:20260814-074833';
@@ -1020,10 +1086,12 @@ export function runMultiModelDarkFlight(
     calTraj ||
     event.source === 'ares' ||
     !Number.isFinite(rawAltKm) ||
-    rawAltKm <= 24 ||
+    // NOTE: rawAltKm <= 24 alone does NOT trigger ground-sky inversion.
+    // Only trigger refProbe when we have a verified ground anchorage:
     (nexradGate &&
       Array.isArray(nexradGate.polygon) &&
-      nexradGate.polygon.length >= 3)
+      nexradGate.polygon.length >= 3) ||
+    hasGroundAnchorage
   ) {
     if (calTraj) {
       effectiveAzimuthDeg = calTraj.azimuth;
@@ -1073,7 +1141,7 @@ export function runMultiModelDarkFlight(
       terminalLat: targetGroundLat,
       terminalLon: targetGroundLon,
       terminalAltM: 20000 + prelimGroundElevM,
-      terminalSpeedMs: 7000,
+      terminalSpeedMs: vDarkMs,
       azimuthDeg: effectiveAzimuthDeg,
       entryAngleDeg,
       massKg: refMassKg,
@@ -1083,25 +1151,67 @@ export function runMultiModelDarkFlight(
       groundElevationM: prelimGroundElevM,
       recordTrack: false,
       dtSec: 0.5,
+      ablationSigma: effectiveAblationSigma,
     });
     if (refProbe) {
       effectiveLat = targetGroundLat - (refProbe.lat - targetGroundLat);
       effectiveLon = targetGroundLon - (refProbe.lon - targetGroundLon);
       effectiveAltM = 20000 + prelimGroundElevM;
-      effectiveSpeedMs = 7000;
+      effectiveSpeedMs = vDarkMs;
       const elevRadInit =
-        Math.max(12, Math.min(85, entryAngleDeg || 42)) * DEG_TO_RAD;
+        Math.max(5, Math.min(85, entryAngleDeg || 42)) * DEG_TO_RAD;
       sensorGateUpperFlareKm =
         Math.round((5.0 / Math.max(0.25, Math.tan(elevRadInit))) * 10) / 10;
     }
-  } else if (terminalAltM > 24000) {
+  } else if (terminalAltM > 24000 && (!nexradGate || !hasGroundAnchorage)) {
     // Universal high-cutoff trajectory extension: project forward along the 3D entry ray
     // from terminalAltM down to the 20 km AGL continuum release zone so the 3D spine
     // passes strictly through (rawLat, rawLon, terminalAltM) with zero up-range shift.
+    // NOTE: refProbe sky-origin inversion is skipped entirely when there is no ground
+    // anchorage (no NEXRAD gate, no ARES fall, no found stones). Camera cutoff points
+    // at low altitude (e.g. 17.96 km) are sky coordinates — never treated as ground!
+    //
+    // Bug #1 fix: Shallow-angle (el < 12°) Earth-grazers decelerate much higher
+    // (29–32 km, not 20 km) because slant air-mass path Δs = Δz / sin(el) is 7.7×
+    // longer. Use Gritsevich velocity-dependent release altitude (V_entry-based)
+    // instead of forcing everything down to 20 km. Also apply spherical Earth
+    // curvature correction (arc length along great circle) for shallow entries.
     const dropKm = Math.max(0, (terminalAltM - (20000 + prelimGroundElevM)) / 1000);
     const elevRadInit =
-      Math.max(12, Math.min(85, entryAngleDeg || 35)) * DEG_TO_RAD;
-    const fwdGroundKm = dropKm / Math.max(0.2, Math.tan(elevRadInit));
+      Math.max(5, Math.min(85, entryAngleDeg || 35)) * DEG_TO_RAD;
+
+    // Gritsevich velocity-dependent terminal release altitude:
+    // Fast/hypervelocity entries (30+ km/s) decelerate higher (~27-31 km)
+    // Slower entries (11-14 km/s) reach deeper (~18-22 km)
+    // (entryVelKmS is already computed above for the Gritsevich model)
+    let retardationAltM;
+    if (entryVelKmS > 25) {
+      // Hypervelocity: ram-pressure cutoff at 2.8 MPa — higher release altitude
+      retardationAltM = Math.min(32000, 24000 + (entryVelKmS - 17.5) * 400);
+    } else if (entryVelKmS < 13) {
+      // Slow: reaches deeper
+      retardationAltM = Math.max(18000, 20000 - (13 - entryVelKmS) * 500);
+    } else {
+      // Nominal: ~20 km
+      retardationAltM = 20000;
+    }
+
+    // For shallow entries (el < 12°), the meteoroid never reaches 20 km — it
+    // decelerates at the velocity-dependent retardation altitude instead.
+    const effectiveReleaseAltM = Math.max(
+      retardationAltM,
+      entryAngleDeg < 12 ? retardationAltM + dropKm * 0.4 : 20000 + prelimGroundElevM,
+    );
+
+    const effectiveDropKm = Math.max(
+      0,
+      (terminalAltM - effectiveReleaseAltM) / 1000,
+    );
+    const fwdGroundKm =
+      entryAngleDeg < 12
+        ? // Shallow: use spherical arc length along great circle
+          (EARTH_RADIUS_M * Math.min(0.5, effectiveDropKm * 1000 / EARTH_RADIUS_M)) / 1000
+        : effectiveDropKm / Math.max(0.2, Math.tan(elevRadInit));
     const fwdAzRad = (azimuthDeg || 0) * DEG_TO_RAD;
     const cosLatInit = Math.max(0.05, Math.cos(lat * DEG_TO_RAD));
     effectiveLat =
@@ -1110,8 +1220,8 @@ export function runMultiModelDarkFlight(
       lon +
       (fwdGroundKm * 1000 * Math.sin(fwdAzRad)) /
         (METERS_PER_DEG_LAT * cosLatInit);
-    effectiveAltM = 20000 + prelimGroundElevM;
-    effectiveSpeedMs = 7000;
+    effectiveAltM = effectiveReleaseAltM;
+    effectiveSpeedMs = vDarkMs;
     sensorGateUpperFlareKm =
       Math.round((5.0 / Math.max(0.25, Math.tan(elevRadInit))) * 10) / 10;
   }
@@ -1455,7 +1565,7 @@ export function runMultiModelDarkFlight(
       stoneFit?.tuning?.upperFlareOffsetKm ?? baselineTuning.upperFlareOffsetKm,
     ) || 0;
   const upRangeAzRad = ((effectiveAzimuthDeg + 180) % 360) * DEG_TO_RAD;
-  const elevRad = Math.max(10, Math.min(85, entryAngleDeg || 35)) * DEG_TO_RAD;
+  const elevRad = Math.max(5, Math.min(85, entryAngleDeg || 35)) * DEG_TO_RAD;
   // Resolve the 3D Entry Trajectory Spine (startLat/Lon/AltKm -> spineEndLat/Lon/AltKm)
   // so the luminous spine, 3D uncertainty cones, Sub-Bolide F1..FN markers, and dark-flight
   // release points are 100% collinear in 3D space with zero sideways gap or kinks.
@@ -1543,11 +1653,6 @@ export function runMultiModelDarkFlight(
       ? scaleSoundingWind(activeSounding, 0.72)
       : activeSounding;
 
-  const entryVelKmS =
-    Number(calTraj?.entryVelocity) ||
-    Number(trajPartnerForSpine?.trajectory?.entryVelocity) ||
-    Number(event?.trajectory?.entryVelocity) ||
-    17.5;
   const onsetRho = (2 * 650000) / Math.max(1e6, (entryVelKmS * 1000) ** 2);
   const physicsOnsetAltKm = Math.max(
     endAltKm + 8,
@@ -1570,7 +1675,7 @@ export function runMultiModelDarkFlight(
   )
     ? Number(activeTuning.groundElevationM)
     : sensorBaseGroundElevationM;
-  const effectiveAblationSigma = Number.isFinite(
+  effectiveAblationSigma = Number.isFinite(
     Number(activeTuning.ablationSigma),
   )
     ? Number(activeTuning.ablationSigma)
@@ -2000,9 +2105,13 @@ export function runMultiModelDarkFlight(
       alongTrackKm,
       aresResidualM,
       matchedFallName,
+      entryVelocityKmS: entryVelKmS,
+      vDarkMs,
+      bronshtenFactor,
+      massLossFactor,
       note: borrowedFromPartner
         ? `Trajectory azimuth borrowed from corroborated partner ${borrowedFromPartner}.`
-        : 'Deterministic 7-mass RK4 spine cross-verified against 160-fragment Monte Carlo ensemble.',
+        : `Deterministic 7-mass RK4 spine cross-verified against 160-fragment Monte Carlo ensemble. Gritsevich V_dark=${vDarkKmS.toFixed(2)} km/s (entry ${entryVelKmS} km/s, mass-loss factor ${massLossFactor.toFixed(4)}).`,
     },
   };
   resultObj.validation = evaluateEventSanityAndOverUnder(

@@ -164,6 +164,11 @@ export function corroborateMeteorEvents(events) {
           aresEv.eventTime = camEv.eventTime;
         }
         const cal = DOCUMENTED_NEXRAD_GATES[aresEv.id]?.calibratedTrajectory;
+        // Preserve the ARES fall's ground centroid (location.lat/lon) at all costs.
+        // Only copy directional + altitude parameters from the camera, never spatial
+        // coordinates that could overwrite a confirmed ground strewn-field position.
+        const aresGroundLat = aresEv.location?.lat;
+        const aresGroundLon = aresEv.location?.lon;
         aresEv.trajectory = cal
           ? {
               ...(aresEv.trajectory || {}),
@@ -179,8 +184,33 @@ export function corroborateMeteorEvents(events) {
               entryVelocity: cal.entryVelocity,
             }
           : {
-              ...camEv.trajectory,
+              ...aresEv.trajectory,
+              // Camera-derived directional/altitude parameters only:
+              azimuth: camEv.trajectory.azimuth,
+              radiantAzimuth: (camEv.trajectory.azimuth + 180) % 360,
+              entryAngle: camEv.trajectory.entryAngle ?? aresEv.trajectory?.entryAngle,
+              entryVelocity:
+                camEv.trajectory.entryVelocity ?? aresEv.trajectory?.entryVelocity,
+              startAltKm: camEv.trajectory.startAltKm ?? aresEv.trajectory?.startAltKm,
+              endAltKm: camEv.trajectory.endAltKm ?? aresEv.trajectory?.endAltKm,
+              startLat: camEv.trajectory.startLat,
+              startLon: camEv.trajectory.startLon,
+              // NEVER overwrite ARES ground centroid with camera sky coordinates.
+              // If camera provides endLat/endLon (a sky cutoff point), keep ARES location:
+              endLat:
+                Number.isFinite(camEv.trajectory.endLat) &&
+                aresEv.trajectory?.endLat === undefined
+                  ? camEv.trajectory.endLat
+                  : aresEv.trajectory?.endLat ?? aresGroundLat,
+              endLon:
+                Number.isFinite(camEv.trajectory.endLon) &&
+                aresEv.trajectory?.endLon === undefined
+                  ? camEv.trajectory.endLon
+                  : aresEv.trajectory?.endLon ?? aresGroundLon,
             };
+        // Restore the ARES ground centroid — never let camera sky coords shadow it.
+        if (Number.isFinite(aresGroundLat)) aresEv.trajectory.endLat = aresGroundLat;
+        if (Number.isFinite(aresGroundLon)) aresEv.trajectory.endLon = aresGroundLon;
       }
     }
   }
