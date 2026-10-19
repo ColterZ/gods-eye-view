@@ -42,7 +42,22 @@
   - **3-Model Cross-Referenced Solver:** Simultaneously runs (1) Deterministic 5-mass RK4 spine (`10 kg`, `1 kg`, `100 g`, `10 g`, `1 g`), (2) 160-fragment seeded Monte Carlo ensemble + $1\sigma / 2\sigma$ covariance ellipses, and (3) Cross-model & confirmed-fall residual calibration (`crossModelOffsetM`, `aresResidualM`).
   - **Weighted Directional Zone of Possibility:** For partial-data bolides missing 3D velocity vectors, marginalizes over entry azimuths weighted by the measured historical upper-air wind drift vector to render an inner wind-advected core + outer possibility envelope.
 - Added `⚡ DARK FLIGHT` toggle chip and `DF: ALL 3`, `DF: MASS SWEEP`, `DF: MONTE CARLO` mode chips in `controls.js` and 3D deceleration curves + ground ellipses in `rendering.js`.
-- Extended `src/layers/meteors/index.test.mjs` to 12 passing unit tests across 5 suites.
+- Extended `src/layers/meteors/index.test.mjs` to 15 passing unit tests across 5 suites.
+
+## 2026-10-18 — Right-Rail Meteor Context Panel & Interactive Recovery Workbench Completed
+- Relocated meteor & dark-flight controls into `#meteor-panel` inside `#right-context-rail` (`src/layers/meteors/panel.js`, `src/ui/styles/meteor.css`, `src/ui/templates/context.html`, `src/ui/styles/layers.css`, `src/ui/panelChrome.js`, `src/ui/panelLayoutController.js`).
+- Fixed `#right-context-rail > #meteor-panel` `pointer-events: auto` and `PanelLayoutController` / `PanelChrome` registration so every chip, collapsible dropdown section, and editable stone/tuning input is hit-testable (`document.elementFromPoint`) and preserves open/closed state + scroll offset across updates.
+- Added full editable `Found Stones & Recovery Editor` (`Label`, `Mass (g)`, `Lat`, `Lon`, `Type`, `Fragmentation Episode`, `Δ Residual`, `🛫` Fly, `🗑` Delete, `＋ Add Found Stone`, `↺ Reset Stones & Fit`) and `Dark Flight & Auto-Fit Tuning` parameter report (`Baseline` → `Fitted` → `Δ Change` with live override inputs).
+
+## 2026-10-18 — Stage 5 Ordered Physics & Recovery Simulation Upgrade Spec (`.hermes/plans/stage5-meteor-physics-upgrade.md`)
+ Packaged in execution order for sequential goal / `agy` runs:
+1. **Phase 1 — Terrain Elevation Intersection (`groundElevationM`):** Terminate RK4 integration at actual ground elevation (`690 m` ASL at Sims Corner, or Open-Meteo `elevation`) instead of sea level (`alt = 0`), eliminating `300–1,500 m` of phantom low-level wind drift.
+2. **Phase 2 — Coupled Hypersonic Ablation (`dm/dt` for `v > 3 km/s`):** Integrate classical single-body ablation $\frac{dm}{dt} = -\sigma_{\text{abl}} \Gamma A \rho v^3$ down to the `3.0 km/s` dark-flight transition, recording `darkFlightOnsetAltKm`, `ablationMassLossPct`, and burnout of sub-gram fragments.
+3. **Phase 3 — Transverse Fragmentation Impulse / Bow-Shock Lateral Ejection ($v_\perp$):** Model Artemieva–Shuvalov shock repulsion $v_\perp = C_T \sqrt{\rho_{\text{air}}/\rho_m} v (m/m_0)^{-1/6}$ at each flare (`F1` and `F2`).
+4. **Phase 4 — Magnus / Aerodynamic Lift & Gliding ($C_L / C_D$):** Add non-zero lift-to-drag ratio ($L/D \approx 0.04\text{–}0.14$) for tabular/oriented chondrites in deterministic and Monte Carlo solvers.
+5. **Phase 5 — Vertical Wind (`w`) & Boundary-Layer Turbulence:** Incorporate vertical updraft/downdraft velocity `w` (`m/s`) and turbulent gust shear into `derivAt(s)`.
+6. **Phase 6 — Impact Terminal Velocity, Kinetic Energy & Soil Penetration Depth (`cm`):** Compute impact speed (`m/s`), energy (`J`), and Poncelet soil burial depth (`cm`) across surface presets and display in the right-rail recovery tables.
+7. **Phase 7 — Weibull Progressive Fracture Cascade ($\sigma_{\text{frag}} = \sigma_0 (m_0/m)^\alpha$):** Derive flare altitudes and F1/F2 child mass survival fractions from aerodynamic ram pressure $P_{\text{dyn}}(z)$ vs. size-dependent tensile strength.
 
 ### Open Questions
 - How to handle CNEOS location uncertainty? (alt is often null)

@@ -164,6 +164,7 @@
 #right-context-rail > #cctv-panel:not(.panel-floating),
 #right-context-rail > #street-level-panel:not(.panel-floating),
 #right-context-rail > #weather-panel,
+#right-context-rail > #meteor-panel,
 #right-context-rail > #recent-imagery-panel,
 #right-context-rail > #global-context-panel {
   position: relative;
@@ -179,6 +180,7 @@
 #right-context-rail #cctv-panel:not(.panel-floating),
 #right-context-rail #street-level-panel:not(.panel-floating),
 #right-context-rail #weather-panel,
+#right-context-rail #meteor-panel,
 #right-context-rail #recent-imagery-panel {
   width: 100%;
   max-height: 100%;
@@ -279,6 +281,7 @@
 #right-context-rail.layout-focus
   > #street-level-panel:not(.collapsed):not(.panel-floating),
 #right-context-rail.layout-focus > #weather-panel:not(.collapsed),
+#right-context-rail.layout-focus > #meteor-panel:not(.collapsed),
 #right-context-rail.layout-focus > #recent-imagery-panel:not(.collapsed),
 #right-context-rail.layout-focus > #global-context-panel:not(.collapsed) {
   flex: 0 1 var(--right-panel-allocated-height);
@@ -295,6 +298,9 @@
 #right-context-rail.layout-focus
   > #weather-panel:not(.collapsed)
   .weather-panel-inner,
+#right-context-rail.layout-focus
+  > #meteor-panel:not(.collapsed)
+  .meteor-panel-inner,
 #right-context-rail.layout-focus
   > #cctv-panel:not(.collapsed):not(.panel-floating)
   .cctv-panel-inner,
@@ -353,6 +359,9 @@
 #right-context-rail[data-rail-measuring]
   > [data-panel-id]:not(.collapsed)
   > .weather-panel-inner,
+#right-context-rail[data-rail-measuring]
+  > [data-panel-id]:not(.collapsed)
+  > .meteor-panel-inner,
 #right-context-rail[data-rail-measuring]
   > [data-panel-id]:not(.collapsed)
   > .recent-imagery-panel-inner,
@@ -1402,6 +1411,7 @@ body.recording-mode #right-context-rail > [data-panel-id] {
 }
 @media (max-width: 720px) {
   #right-context-rail #weather-panel.collapsed,
+  #right-context-rail #meteor-panel.collapsed,
   #right-context-rail #recent-imagery-panel.collapsed {
     width: 100%;
   }

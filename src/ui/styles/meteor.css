@@ -1,6 +1,12 @@
 /* Meteor / fireball right-rail context panel. Mirrors weather-panel chrome. */
 
+#meteor-panel {
+  pointer-events: auto;
+  width: 100%;
+}
+
 .meteor-panel-inner {
+  pointer-events: auto;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -43,8 +49,9 @@
 }
 
 #meteor-panel-body {
+  flex: 1 1 auto;
   min-height: 0;
-  max-height: calc(var(--right-stack-max-height, 50svh) - 64px);
+  max-height: calc(var(--right-stack-max-height, 72svh) - 52px);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;

@@ -39,6 +39,7 @@ export function createMeteorPanel({
   let currentDarkFlightActive = false;
   let lastSignature = null;
   let lastSelected = null;
+  const sectionExpandedState = new Map();
 
   /* ------------------------------------------------------------------ */
   /*  Small DOM helpers                                                 */
@@ -62,25 +63,40 @@ export function createMeteorPanel({
     if (placeholder) i.placeholder = placeholder;
     return i;
   };
-  const toggleSection = (header, bodyEl) => {
-    const expanded = header.getAttribute('aria-expanded') === 'true';
-    header.setAttribute('aria-expanded', String(!expanded));
-    bodyEl.hidden = expanded;
+  const makeSection = (sectionKey, titleText, className, defaultExpanded = true) => {
+    const expanded = sectionExpandedState.has(sectionKey)
+      ? sectionExpandedState.get(sectionKey)
+      : defaultExpanded;
+    const section = el('section', `meteor-section ${className || ''}`.trim(), null);
+    const header = el('button', 'meteor-section-header', section);
+    header.type = 'button';
+    header.dataset.sectionKey = sectionKey;
+    header.setAttribute('aria-expanded', String(expanded));
+    header.setAttribute('aria-controls', `meteor-${sectionKey}-body`);
+    el('span', 'meteor-section-title', header).textContent = titleText;
+    el('span', 'meteor-section-chevron', header).textContent = '▼';
+    const content = el('div', 'meteor-section-body', section);
+    content.id = `meteor-${sectionKey}-body`;
+    content.hidden = !expanded;
+    header.addEventListener('click', () => {
+      const nowExpanded = header.getAttribute('aria-expanded') !== 'true';
+      sectionExpandedState.set(sectionKey, nowExpanded);
+      header.setAttribute('aria-expanded', String(nowExpanded));
+      content.hidden = !nowExpanded;
+    });
+    return { section, header, content };
   };
 
   /* ------------------------------------------------------------------ */
   /*  Section: Time & Source filters                                    */
   /* ------------------------------------------------------------------ */
   function renderFilterSection(chips) {
-    const section = el('section', 'meteor-section meteor-filters', null);
-    const header = el('button', 'meteor-section-header', section);
-    header.type = 'button';
-    header.setAttribute('aria-expanded', 'true');
-    header.setAttribute('aria-controls', 'meteor-filters-body');
-    el('span', 'meteor-section-title', header).textContent = t('Filters & Sources');
-    el('span', 'meteor-section-chevron', header).textContent = '▼';
-    const content = el('div', 'meteor-section-body', section);
-    content.id = 'meteor-filters-body';
+    const { section, content } = makeSection(
+      'filters',
+      t('Filters & Sources'),
+      'meteor-filters',
+      true,
+    );
 
     const timeGroup = el('div', 'meteor-chip-group', content);
     el('span', 'meteor-chip-group-label', timeGroup).textContent = t('Time window');
@@ -102,9 +118,6 @@ export function createMeteorPanel({
       sourceGroup.appendChild(b);
     }
 
-    header.addEventListener('click', () => {
-      toggleSection(header, content);
-    });
     return section;
   }
 
@@ -112,15 +125,12 @@ export function createMeteorPanel({
   /*  Section: Scene & Action chips (shown when an event is selected)   */
   /* ------------------------------------------------------------------ */
   function renderActionSection(chips) {
-    const section = el('section', 'meteor-section meteor-actions', null);
-    const header = el('button', 'meteor-section-header', section);
-    header.type = 'button';
-    header.setAttribute('aria-expanded', 'true');
-    header.setAttribute('aria-controls', 'meteor-actions-body');
-    el('span', 'meteor-section-title', header).textContent = t('Scene & Actions');
-    el('span', 'meteor-section-chevron', header).textContent = '▼';
-    const content = el('div', 'meteor-section-body', section);
-    content.id = 'meteor-actions-body';
+    const { section, content } = makeSection(
+      'actions',
+      t('Scene & Actions'),
+      'meteor-actions',
+      true,
+    );
 
     for (const chip of chips) {
       if (chip.id.startsWith('window-') || chip.id.startsWith('source-')) continue;
@@ -132,26 +142,20 @@ export function createMeteorPanel({
       content.appendChild(b);
     }
 
-    header.addEventListener('click', () => {
-      toggleSection(header, content);
-    });
     return section;
   }
 
   /* ------------------------------------------------------------------ */
   /*  Section: Event list (browser mode)                                */
   /* ------------------------------------------------------------------ */
-  function renderEventList(list) {
+  function renderEventList(list, defaultOpen = true) {
     if (!list) return null;
-    const section = el('section', 'meteor-section meteor-event-list', null);
-    const header = el('button', 'meteor-section-header', section);
-    header.type = 'button';
-    header.setAttribute('aria-expanded', 'true');
-    header.setAttribute('aria-controls', 'meteor-events-body');
-    el('span', 'meteor-section-title', header).textContent = `${list.ariaLabel || t('Events')}`;
-    el('span', 'meteor-section-chevron', header).textContent = '▼';
-    const content = el('div', 'meteor-section-body', section);
-    content.id = 'meteor-events-body';
+    const { section, content } = makeSection(
+      'events',
+      `${list.ariaLabel || t('Events')}`,
+      'meteor-event-list',
+      defaultOpen,
+    );
 
     const ul = el('ul', 'meteor-event-list', content);
     for (const item of list.items || []) {
@@ -163,9 +167,6 @@ export function createMeteorPanel({
       li.appendChild(b);
     }
 
-    header.addEventListener('click', () => {
-      toggleSection(header, content);
-    });
     return section;
   }
 
@@ -174,22 +175,15 @@ export function createMeteorPanel({
   /* ------------------------------------------------------------------ */
   function renderInfoSection(infoText, infoTitle) {
     if (!infoText) return null;
-    const section = el('section', 'meteor-section meteor-info', null);
-    const header = el('button', 'meteor-section-header', section);
-    header.type = 'button';
-    header.setAttribute('aria-expanded', 'true');
-    header.setAttribute('aria-controls', 'meteor-info-body');
-    el('span', 'meteor-section-title', header).textContent = t('Event Summary');
-    el('span', 'meteor-section-chevron', header).textContent = '▼';
-    const content = el('div', 'meteor-section-body', section);
-    content.id = 'meteor-info-body';
+    const { section, content } = makeSection(
+      'info',
+      t('Event Trajectory, Speed & Context'),
+      'meteor-info',
+      true,
+    );
     const pre = el('pre', 'meteor-info-text', content);
     pre.textContent = infoText;
     if (infoTitle) pre.title = infoTitle;
-
-    header.addEventListener('click', () => {
-      toggleSection(header, content);
-    });
     return section;
   }
 
@@ -198,15 +192,12 @@ export function createMeteorPanel({
   /* ------------------------------------------------------------------ */
   function renderDarkFlightSection(df) {
     if (!df) return null;
-    const section = el('section', 'meteor-section meteor-dark-flight', null);
-    const header = el('button', 'meteor-section-header', section);
-    header.type = 'button';
-    header.setAttribute('aria-expanded', 'true');
-    header.setAttribute('aria-controls', 'meteor-df-body');
-    el('span', 'meteor-section-title', header).textContent = t('Dark Flight Simulation');
-    el('span', 'meteor-section-chevron', header).textContent = '▼';
-    const content = el('div', 'meteor-section-body', section);
-    content.id = 'meteor-df-body';
+    const { section, content } = makeSection(
+      'dark-flight',
+      t('Dark Flight & Auto-Fit Tuning'),
+      'meteor-dark-flight',
+      true,
+    );
 
     const table = el('table', 'meteor-param-table', content);
     const tbody = el('tbody', null, table);
@@ -277,9 +268,6 @@ export function createMeteorPanel({
       }
     }
 
-    header.addEventListener('click', () => {
-      toggleSection(header, content);
-    });
     return section;
   }
 
@@ -287,15 +275,12 @@ export function createMeteorPanel({
   /*  Section: Found Stones & Recovery Editor (editable)                 */
   /* ------------------------------------------------------------------ */
   function renderFoundStonesSection(comparisons) {
-    const section = el('section', 'meteor-section meteor-found-stones', null);
-    const header = el('button', 'meteor-section-header', section);
-    header.type = 'button';
-    header.setAttribute('aria-expanded', 'true');
-    header.setAttribute('aria-controls', 'meteor-stones-body');
-    el('span', 'meteor-section-title', header).textContent = t('Found Stones & Recovery');
-    el('span', 'meteor-section-chevron', header).textContent = '▼';
-    const content = el('div', 'meteor-section-body', section);
-    content.id = 'meteor-stones-body';
+    const { section, content } = makeSection(
+      'found-stones',
+      t('Found Stones & Recovery Editor'),
+      'meteor-found-stones',
+      true,
+    );
 
     const table = el('table', 'meteor-stone-table', content);
     const thead = el('thead', null, table);
@@ -327,18 +312,18 @@ export function createMeteorPanel({
 
       const latCell = el('td', null, tr);
       const latInput = input('number', 'meteor-stone-lat-input', null);
-      latInput.value = c.stone.latitude || '';
+      latInput.value = String(c.stone.lat ?? c.stone.latitude ?? '');
       latInput.step = '0.0001';
       latInput.dataset.stoneId = tr.dataset.stoneId;
-      latInput.dataset.field = 'latitude';
+      latInput.dataset.field = 'lat';
       latCell.appendChild(latInput);
 
       const lonCell = el('td', null, tr);
       const lonInput = input('number', 'meteor-stone-lon-input', null);
-      lonInput.value = c.stone.longitude || '';
+      lonInput.value = String(c.stone.lon ?? c.stone.longitude ?? '');
       lonInput.step = '0.0001';
       lonInput.dataset.stoneId = tr.dataset.stoneId;
-      lonInput.dataset.field = 'longitude';
+      lonInput.dataset.field = 'lon';
       lonCell.appendChild(lonInput);
 
       const typeCell = el('td', null, tr);
@@ -364,19 +349,19 @@ export function createMeteorPanel({
       actionCell.append(flyBtn, delBtn);
     }
 
-    /* Add new stone row */
+    /* Add new stone / Reset stones row */
     if (currentSelected) {
       const addTr = el('tr', 'meteor-stone-add-row', tbody);
       const addCell = el('td', null, addTr);
       addCell.colSpan = 8;
-      const addBtn = btn('＋ Add Found Stone', 'meteor-stone-add-btn', t('Add a new found stone at the cursor location'));
+      const addBtn = btn('＋ Add Found Stone', 'meteor-stone-add-btn', t('Add a new found stone to this event'));
       addBtn.dataset.action = 'addStone';
-      addCell.appendChild(addBtn);
+      const resetBtn = btn('↺ Reset Stones & Fit', 'meteor-stone-add-btn', t('Reset found stones and tuning to documented baseline'));
+      resetBtn.dataset.action = 'resetStones';
+      resetBtn.style.marginTop = '4px';
+      addCell.append(addBtn, resetBtn);
     }
 
-    header.addEventListener('click', () => {
-      toggleSection(header, content);
-    });
     return section;
   }
 
@@ -385,15 +370,12 @@ export function createMeteorPanel({
   /* ------------------------------------------------------------------ */
   function renderValidationSection(val) {
     if (!val) return null;
-    const section = el('section', 'meteor-section meteor-validation', null);
-    const header = el('button', 'meteor-section-header', section);
-    header.type = 'button';
-    header.setAttribute('aria-expanded', 'true');
-    header.setAttribute('aria-controls', 'meteor-val-body');
-    el('span', 'meteor-section-title', header).textContent = t('Sensor Diagnostics');
-    el('span', 'meteor-section-chevron', header).textContent = '▼';
-    const content = el('div', 'meteor-section-body', section);
-    content.id = 'meteor-val-body';
+    const { section, content } = makeSection(
+      'validation',
+      t('Doppler Radar, Satellite Stereo & Yield Diagnostics'),
+      'meteor-validation',
+      true,
+    );
 
     const pre = el('pre', 'meteor-info-text', content);
     const lines = [];
@@ -422,10 +404,6 @@ export function createMeteorPanel({
     }
 
     pre.textContent = lines.join('\n');
-
-    header.addEventListener('click', () => {
-      toggleSection(header, content);
-    });
     return section;
   }
 
@@ -434,15 +412,12 @@ export function createMeteorPanel({
   /* ------------------------------------------------------------------ */
   function renderMassCascadeSection(df) {
     if (!df || !df.darkFlightTracks) return null;
-    const section = el('section', 'meteor-section meteor-masscascade', null);
-    const header = el('button', 'meteor-section-header', section);
-    header.type = 'button';
-    header.setAttribute('aria-expanded', 'true');
-    header.setAttribute('aria-controls', 'meteor-mc-body');
-    el('span', 'meteor-section-title', header).textContent = t('Mass Cascade Tracks');
-    el('span', 'meteor-section-chevron', header).textContent = '▼';
-    const content = el('div', 'meteor-section-body', section);
-    content.id = 'meteor-mc-body';
+    const { section, content } = makeSection(
+      'mass-cascade',
+      t('Mass Cascade Tracks'),
+      'meteor-masscascade',
+      false,
+    );
 
     const table = el('table', 'meteor-param-table', content);
     const thead = el('thead', null, table);
@@ -468,9 +443,6 @@ export function createMeteorPanel({
       }
     }
 
-    header.addEventListener('click', () => {
-      toggleSection(header, content);
-    });
     return section;
   }
 
@@ -494,6 +466,12 @@ export function createMeteorPanel({
           end: active.selectionEnd,
         }
       : null;
+    const prevScrollTop = body.scrollTop || 0;
+
+    const chipsById = new Map((descriptor.chips || []).map((c) => [c.id, c]));
+    const nextSelected = chipsById.has('clear-selected')
+      ? descriptor.list?.items?.find((i) => i.active)?.id || true
+      : null;
 
     /* Skip the rebuild when nothing the panel renders has changed — a dark
        flight run notifies several times and each rebuild is a full teardown. */
@@ -504,24 +482,32 @@ export function createMeteorPanel({
       (descriptor.legend || []).map((l) => [l.label, l.count]),
       descriptor.darkFlight ? Object.keys(descriptor.darkFlight).length : 0,
       descriptor.stoneFit?.bestRmsM ?? null,
-      descriptor.stoneFit?.comparisons?.length ?? null,
+      (descriptor.stoneFit?.comparisons || []).map((c) => [
+        c.stone?.id,
+        c.stone?.label,
+        c.stone?.massGrams,
+        c.stone?.lat ?? c.stone?.latitude,
+        c.stone?.lon ?? c.stone?.longitude,
+        c.stone?.type,
+        c.errorM,
+      ]),
+      (descriptor.stoneFit?.parameterReport || []).map((p) => [
+        p.key,
+        p.afterValue,
+        p.deltaFormatted,
+      ]),
       descriptor.validation ? Object.keys(descriptor.validation).length : 0,
     ]);
-    if (signature === lastSignature && currentSelected === lastSelected) {
+    if (signature === lastSignature && nextSelected === lastSelected) {
       currentDescriptor = descriptor;
       return;
     }
     lastSignature = signature;
 
     currentDescriptor = descriptor;
-    currentChipsById = new Map((descriptor.chips || []).map((c) => [c.id, c]));
+    currentChipsById = chipsById;
     currentListItems = descriptor.list?.items || [];
-
-    /* An event is selected exactly when the descriptor offers its per-event
-       chips (CLEAR / FOCUS / dark flight); the browser view offers none. */
-    currentSelected = currentChipsById.has('clear-selected')
-      ? descriptor.list?.items?.find((i) => i.active)?.id || true
-      : null;
+    currentSelected = nextSelected;
     lastSelected = currentSelected;
 
     /* Extract dark-flight-specific blocks from the info text or state */
@@ -564,9 +550,9 @@ export function createMeteorPanel({
       body.appendChild(legendSection);
     }
 
-    /* Event list — shown when no event is selected */
-    if (!currentSelected && descriptor.list) {
-      const listSection = renderEventList(descriptor.list);
+    /* Event list — open by default in browser mode; collapsible dropdown when an event is selected */
+    if (descriptor.list) {
+      const listSection = renderEventList(descriptor.list, !currentSelected);
       if (listSection) body.appendChild(listSection);
     }
 
@@ -609,6 +595,10 @@ export function createMeteorPanel({
       countBadge.textContent = String(descriptor.legend
         ? descriptor.legend.reduce((sum, l) => sum + (l.count || 0), 0)
         : currentListItems.length);
+    }
+
+    if (prevScrollTop > 0) {
+      body.scrollTop = prevScrollTop;
     }
 
     /* Put the caret back where the operator left it. */
@@ -674,6 +664,12 @@ export function createMeteorPanel({
       return;
     }
 
+    const resetBtn = event.target?.closest?.('[data-action="resetStones"]');
+    if (resetBtn) {
+      setLayerParams('meteors', { resetFoundStones: true }, { origin: 'user' });
+      return;
+    }
+
     const delBtn = event.target?.closest?.('.meteor-stone-delete');
     if (delBtn) {
       setLayerParams('meteors', { removeStoneId: delBtn.dataset.stoneId }, { origin: 'user' });
@@ -705,13 +701,22 @@ export function createMeteorPanel({
         const stone = c.stone || c;
         const key = stone.id || stone.label;
         if (key !== stoneId) return { ...stone };
-        return {
+        const nextVal =
+          field === 'massGrams' || field === 'lat' || field === 'lon' || field === 'latitude' || field === 'longitude'
+            ? parseFloat(rawValue)
+            : rawValue;
+        const nextStone = {
           ...stone,
-          [field]:
-            field === 'massGrams' || field === 'latitude' || field === 'longitude'
-              ? parseFloat(rawValue)
-              : rawValue,
+          [field]: nextVal,
         };
+        if (field === 'lat' || field === 'latitude') {
+          nextStone.lat = nextVal;
+          nextStone.latitude = nextVal;
+        } else if (field === 'lon' || field === 'longitude') {
+          nextStone.lon = nextVal;
+          nextStone.longitude = nextVal;
+        }
+        return nextStone;
       });
       setLayerParams('meteors', { setFoundStones: updated }, { origin: 'user' });
     } else if (paramKey) {
@@ -727,10 +732,25 @@ export function createMeteorPanel({
   /* ------------------------------------------------------------------ */
   function setEnabled(enabled) {
     if (destroyed) return;
+    const wasHidden = container.hidden;
     container.hidden = !enabled;
-    if (enabled && !container.classList.contains('panel-open')) {
+    if (enabled) {
       container.classList.add('panel-open');
-    } else if (!enabled) {
+      if (wasHidden) {
+        container.classList.remove('layout-auto-collapsed');
+        const collapseBtn = container.querySelector(
+          '[data-collapse-target="meteor-panel"]',
+        );
+        if (collapseBtn) {
+          if (!container.classList.contains('collapsed')) {
+            container.classList.add('collapsed');
+          }
+          collapseBtn.click();
+        } else {
+          container.classList.remove('collapsed');
+        }
+      }
+    } else {
       container.classList.remove('panel-open');
     }
   }

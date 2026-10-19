@@ -464,23 +464,29 @@ export function createControls({ layerState, services, components, config }) {
       if (params.flyToStone === true) {
         const sel = selectedEvent();
         const stoneId = params.stoneId;
-        if (sel && stoneId) {
+        let targetLat = Number(params.lat);
+        let targetLon = Number(params.lon);
+        if (sel && stoneId && (!Number.isFinite(targetLat) || !Number.isFinite(targetLon))) {
           const stones = getFoundStonesForEvent(sel);
           const stone = stones.find((s) => (s.id || s.label) === stoneId);
-          if (stone && Number.isFinite(stone.latitude) && Number.isFinite(stone.longitude)) {
-            const viewer = layerState._viewer;
-            if (viewer) {
-              const rangeM = Math.max(400, 1200);
-              const center = Cesium.Cartesian3.fromDegrees(
-                stone.longitude,
-                stone.latitude,
-                500,
-              );
-              viewer.camera.flyToBoundingSphere(
-                new Cesium.BoundingSphere(center, rangeM * 0.45),
-                { duration: 1.0 },
-              );
-            }
+          if (stone) {
+            targetLat = Number(stone.lat ?? stone.latitude);
+            targetLon = Number(stone.lon ?? stone.longitude);
+          }
+        }
+        if (Number.isFinite(targetLat) && Number.isFinite(targetLon)) {
+          const viewer = layerState._viewer;
+          if (viewer) {
+            const rangeM = Math.max(400, 1200);
+            const center = Cesium.Cartesian3.fromDegrees(
+              targetLon,
+              targetLat,
+              500,
+            );
+            viewer.camera.flyToBoundingSphere(
+              new Cesium.BoundingSphere(center, rangeM * 0.45),
+              { duration: 1.0 },
+            );
           }
         }
         changed = true;

@@ -292,6 +292,7 @@ export class PanelChrome {
       'pp-toggles',
       'cctv-panel',
       'weather-panel',
+      'meteor-panel',
       'recent-imagery-panel',
       'street-level-panel',
       'global-context-panel',
