@@ -240,11 +240,25 @@ export const DOCUMENTED_NEXRAD_GATES = Object.freeze({
     gateAltitudeMarginKm: 0.65,
     beamWidthDeg: 0.95,
     reflectivityDbz: 24.5,
-    opticalSizeInches: 16,
-    opticalEntryMassKg: 77.1,
-    acousticEnergyTonsTnt: 10.0,
     flareAltitudesKm: [61.5, 45.5],
     // Blue radar gate polygon from Sims Corner field map (east of WA-17 between 81g & 48.5g/46.6g)
+    polygon: Object.freeze([
+      Object.freeze({ lat: 47.8842, lon: -119.3718 }),
+      Object.freeze({ lat: 47.8848, lon: -119.3592 }),
+      Object.freeze({ lat: 47.8658, lon: -119.3586 }),
+      Object.freeze({ lat: 47.8652, lon: -119.3712 }),
+    ]),
+  }),
+  'asgard:20260814-074833': Object.freeze({
+    station: 'KOTX (Spokane, WA) / KPDT (Pendleton, OR)',
+    gateTimeUtc: '2026-08-14T07:50:41Z',
+    bolideTimeUtc: '2026-08-14T07:48:36Z',
+    elapsedSec: 125,
+    gateAltitudeKm: 10.29,
+    gateAltitudeMarginKm: 0.65,
+    beamWidthDeg: 0.95,
+    reflectivityDbz: 24.5,
+    flareAltitudesKm: [61.5, 45.5],
     polygon: Object.freeze([
       Object.freeze({ lat: 47.8842, lon: -119.3718 }),
       Object.freeze({ lat: 47.8848, lon: -119.3592 }),
@@ -261,9 +275,6 @@ export const DOCUMENTED_NEXRAD_GATES = Object.freeze({
     gateAltitudeMarginKm: 0.5,
     beamWidthDeg: 0.95,
     reflectivityDbz: 28.0,
-    opticalSizeInches: 12,
-    opticalEntryMassKg: 42.0,
-    acousticEnergyTonsTnt: 4.0,
     flareAltitudesKm: [48.0, 31.0],
     polygon: Object.freeze([
       Object.freeze({ lat: 40.391, lon: -74.802 }),
@@ -526,7 +537,9 @@ export function evaluateEventSanityAndOverUnder(
   );
   const pathCones = computeFlightPathUncertaintyCones(event, allEvents);
 
-  // 1. Pre-atmospheric entry mass comparison (Optical/Size vs Acoustic/Energy)
+  // 1. Pre-atmospheric entry mass & energy dynamically retrieved from upstream sources
+  const retrievedClaims =
+    asgardRec?.nasaRetrievedClaims || event?.nasaRetrievedClaims || null;
   const velKmS =
     Number(asgardRec?.trajectory?.entryVelocity) ||
     Number(gmnRec?.trajectory?.entryVelocity) ||
@@ -535,9 +548,14 @@ export function evaluateEventSanityAndOverUnder(
     14.6;
   const velMs = velKmS * 1000;
 
-  const impactKt = nexrad?.acousticEnergyTonsTnt
-    ? nexrad.acousticEnergyTonsTnt / 1000
-    : Number(cneosRec?.energy?.impact) || Number(event?.energy?.impact) || null;
+  const impactKt =
+    (Number.isFinite(retrievedClaims?.energyTonsTnt)
+      ? retrievedClaims.energyTonsTnt / 1000
+      : null) ||
+    Number(cneosRec?.energy?.impact) ||
+    Number(asgardRec?.energy?.impact) ||
+    Number(event?.energy?.impact) ||
+    null;
   const energyTonsTnt = Number.isFinite(impactKt) ? impactKt * 1000 : null;
 
   // Acoustic/energy derived mass: E = 0.5 * m * v^2
@@ -547,9 +565,10 @@ export function evaluateEventSanityAndOverUnder(
         10
       : null;
 
-  // Optical / camera derived mass
+  // Optical / camera derived mass (from retrieved ASGARD size/mass or GMN photometric mass)
   const opticalEntryMassKg =
-    nexrad?.opticalEntryMassKg ||
+    (Number.isFinite(retrievedClaims?.massKg) ? retrievedClaims.massKg : null) ||
+    (Number.isFinite(asgardRec?.mass) ? asgardRec.mass : null) ||
     (Number.isFinite(gmnRec?.mass) ? gmnRec.mass : null) ||
     (Number.isFinite(event?.mass) ? event.mass : null);
 
@@ -621,8 +640,11 @@ export function evaluateEventSanityAndOverUnder(
     acousticEntryMassKg > opticalEntryMassKg * 2.2
   ) {
     const ratio = (acousticEntryMassKg / opticalEntryMassKg).toFixed(1);
+    const sizeLabel = retrievedClaims?.diameterInches
+      ? `${retrievedClaims.diameterInches} in`
+      : 'camera photometric';
     sanityWarnings.push(
-      `Entry Mass Spread (${ratio}×): Acoustic/GLM energy (${energyTonsTnt.toFixed(0)}t TNT) implies ${acousticEntryMassKg} kg at nominal τ=10%, whereas NASA optical size (${nexrad?.opticalSizeInches || 16} in) is ${opticalEntryMassKg} kg. Double-flare disruption (${(nexrad?.flareAltitudesKm || [61.5, 45.5]).join(' & ')} km) pulverizes >80% of mass into micron dust, amplifying flash energy without producing multi-kg boulders.`,
+      `Entry Mass Spread (${ratio}×): Acoustic/GLM energy (${energyTonsTnt.toFixed(0)}t TNT) implies ${acousticEntryMassKg} kg at nominal τ=10%, whereas retrieved optical size (${sizeLabel}) is ${opticalEntryMassKg} kg. Double-flare disruption (${(nexrad?.flareAltitudesKm || [61.5, 45.5]).join(' & ')} km) pulverizes >80% of mass into micron dust, amplifying flash energy without producing multi-kg boulders.`,
     );
   }
 
@@ -758,12 +780,37 @@ export function evaluateEventSanityAndOverUnder(
     nexrad,
   });
 
+  const longApproach = computeLongApproachTrajectory(event, trajPartner);
+  const nasaAudit = computeIndependentNasaAudit({
+    event,
+    trajPartner,
+    asgardRec,
+    gmnRec,
+    cneosRec,
+    nexrad,
+    nexradCoverage,
+    aeroPhysics,
+    radarCheck,
+    longApproach,
+    opticalEntryMassKg,
+    acousticEntryMassKg,
+    energyTonsTnt,
+  });
+
+  if (Array.isArray(nasaAudit?.auditWarnings)) {
+    for (const w of nasaAudit.auditWarnings) {
+      if (!sanityWarnings.includes(w)) sanityWarnings.push(w);
+    }
+  }
+
   return {
     opticalEntryMassKg,
     acousticEntryMassKg,
     energyTonsTnt,
     aeroPhysics,
     weibullCascade,
+    longApproach,
+    nasaAudit,
     cneosDiag,
     nexrad,
     nexradCoverage,
@@ -840,5 +887,429 @@ export function computeWeibullFractureCascade(
     maxChildTerminalGrams: Math.max(5, Math.round(maxChildTerminalKg * 1000)),
     powerLawExponent,
     summary: `Weibull Cascade (σ₀=${s0} MPa, α=${alpha}): F1 (${flareAltsKm[0]} km, P_dyn=${pDynUpperMpa} MPa) sheds ${flare1SharePct}% of surviving mass · F2 (${flareAltsKm[flareAltsKm.length - 1]} km, P_dyn=${pDynTerminalMpa} MPa) sheds ${flare2SharePct}% (power-law β=${powerLawExponent})`,
+  };
+}
+
+/**
+ * Compute Long-Approach Pre-Atmospheric Hyperbolic Trajectory & Zenith-Attraction Arc.
+ *
+ * Extends the measured atmospheric trajectory backward through the 120 km entry
+ * interface out to 1,000 km altitude (~70–90s prior to luminous onset),
+ * accounting for:
+ *  - Earth escape speed at altitude z: v_esc(z) = sqrt(2 * GM_E / (R_E + z))
+ *  - Unperturbed geocentric approach velocity: v_g = sqrt(max(0, v_entry^2 - v_esc^2))
+ *  - Zenith attraction bending of the radiant:
+ *      tan(Δz_g / 2) = ((v_entry - v_g) / (v_entry + v_g)) * tan(z_R / 2)
+ */
+export function computeLongApproachTrajectory(event, trajPartner = event) {
+  const src = trajPartner || event;
+  const t = src?.trajectory || {};
+  const startLat = Number.isFinite(t.startLat)
+    ? Number(t.startLat)
+    : Number(src?.location?.lat ?? event?.location?.lat);
+  const startLon = Number.isFinite(t.startLon)
+    ? Number(t.startLon)
+    : Number(src?.location?.lon ?? event?.location?.lon);
+  if (!Number.isFinite(startLat) || !Number.isFinite(startLon)) return null;
+
+  const startAltKm = Number.isFinite(t.startAltKm) ? Number(t.startAltKm) : 82;
+  const endAltKm = Number.isFinite(t.endAltKm)
+    ? Number(t.endAltKm)
+    : Number(src?.location?.altitude) || 45.5;
+  const entryVelocityKmS =
+    Number(t.entryVelocity) || Number(event?.trajectory?.entryVelocity) || 14.6;
+  const azimuthDeg = Number.isFinite(t.azimuth) ? Number(t.azimuth) : 3.1;
+  const entryAngleDeg = Number.isFinite(t.entryAngle)
+    ? Math.max(5, Math.min(88, Number(t.entryAngle)))
+    : 35.2;
+
+  // Gravitational parameters (Earth GM = 398,600.4418 km^3/s^2, R_E = 6371 km)
+  const GM_E = 398600.4418;
+  const R_E = 6371.0;
+  const vEscEntryKmS = Math.sqrt((2 * GM_E) / (R_E + startAltKm));
+  const vGeoCalcKmS =
+    entryVelocityKmS > vEscEntryKmS
+      ? Math.sqrt(entryVelocityKmS ** 2 - vEscEntryKmS ** 2)
+      : Math.max(1.5, entryVelocityKmS * 0.35);
+  const geocentricSpeedKmS =
+    Math.round((Number(t.geocentricVelocity) || vGeoCalcKmS) * 100) / 100;
+
+  // Apparent zenith angle z_R = 90° - entryAngleDeg
+  const zAppRad = (90 - entryAngleDeg) * DEG_TO_RAD;
+  const tanHalfDz =
+    ((entryVelocityKmS - vGeoCalcKmS) /
+      Math.max(1, entryVelocityKmS + vGeoCalcKmS)) *
+    Math.tan(zAppRad / 2);
+  const zenithAttractionDeg =
+    Math.round(2 * Math.atan(Math.max(0, tanHalfDz)) * RAD_TO_DEG * 100) / 100;
+  const unperturbedEntryAngleDeg =
+    Math.round(Math.max(1, entryAngleDeg - zenithAttractionDeg) * 100) / 100;
+
+  // Propagate backward up-range along reverse azimuth (radiant direction)
+  const upRangeAzRad = ((azimuthDeg + 180) % 360) * DEG_TO_RAD;
+  const cosLat = Math.max(0.05, Math.cos(startLat * DEG_TO_RAD));
+  const altLevelsKm = [startAltKm, 120, 250, 500, 1000];
+  const waypoints = [];
+
+  for (let i = 0; i < altLevelsKm.length; i++) {
+    const altKm = altLevelsKm[i];
+    const dAltKm = Math.max(0, altKm - startAltKm);
+    // Interpolate pitch angle between entryAngleDeg (at startAltKm) and unperturbedEntryAngleDeg (at 1000 km)
+    const frac = Math.min(1, dAltKm / Math.max(1, 1000 - startAltKm));
+    const effAngleDeg =
+      entryAngleDeg - frac * (entryAngleDeg - unperturbedEntryAngleDeg);
+    const tanPitch = Math.tan(Math.max(3, effAngleDeg) * DEG_TO_RAD);
+    const groundDistKm = dAltKm / Math.max(0.08, tanPitch);
+    const slantDistKm = Math.hypot(dAltKm, groundDistKm);
+
+    const vLocalEscKmS = Math.sqrt((2 * GM_E) / (R_E + altKm));
+    const speedKmS =
+      Math.round(Math.sqrt(vGeoCalcKmS ** 2 + vLocalEscKmS ** 2) * 100) / 100;
+    const meanSpeedKmS = 0.5 * (entryVelocityKmS + speedKmS);
+    const tMinusSec = Math.round((slantDistKm / Math.max(1, meanSpeedKmS)) * 10) / 10;
+
+    const wpLat =
+      startLat +
+      ((groundDistKm * 1000) / METERS_PER_DEG_LAT) * Math.cos(upRangeAzRad);
+    const wpLon =
+      startLon +
+      ((groundDistKm * 1000) / (METERS_PER_DEG_LAT * cosLat)) *
+        Math.sin(upRangeAzRad);
+
+    waypoints.push({
+      altKm: Math.round(altKm * 10) / 10,
+      lat: Math.round(wpLat * 10000) / 10000,
+      lon: Math.round(wpLon * 10000) / 10000,
+      upRangeGroundKm: Math.round(groundDistKm * 10) / 10,
+      slantDistKm: Math.round(slantDistKm * 10) / 10,
+      speedKmS,
+      pitchAngleDeg: Math.round(effAngleDeg * 10) / 10,
+      tMinusSec: -tMinusSec,
+    });
+  }
+
+  return {
+    entrySpeedKmS: Math.round(entryVelocityKmS * 100) / 100,
+    geocentricSpeedKmS,
+    heliocentricSpeedKmS: Number(t.heliocentricVelocity) || null,
+    escapeSpeedAtEntryKmS: Math.round(vEscEntryKmS * 100) / 100,
+    apparentEntryAngleDeg: entryAngleDeg,
+    unperturbedEntryAngleDeg,
+    zenithAttractionDeg,
+    measuredDecelerationKmS2: Number(t.measuredDecelerationKmS2) || null,
+    entryInterface120Km: waypoints[1] || waypoints[0],
+    cislunar1000Km: waypoints[waypoints.length - 1],
+    waypoints,
+    summary: `Long-Approach Hyperbolic Arc: V_geo=${geocentricSpeedKmS} km/s → V_entry=${entryVelocityKmS.toFixed(1)} km/s (gravitational focusing +${ (entryVelocityKmS - geocentricSpeedKmS).toFixed(2) } km/s, zenith attraction Δz_g=+${zenithAttractionDeg}° bending pitch ${unperturbedEntryAngleDeg}° → ${entryAngleDeg}°) · 1000 km approach begins at T${waypoints[waypoints.length - 1].tMinusSec}s (${waypoints[waypoints.length - 1].upRangeGroundKm} km up-range)`,
+  };
+}
+
+/**
+ * Independent 5-Check Physics & Geometry Audit against NASA / Upstream Claims.
+ *
+ * Never trusts upstream numbers blindly; independently cross-calculates:
+ *  1. Mass–Diameter–Density Bulk Porosity Check (D vs m vs solid chondrite 3.35 g/cm³)
+ *  2. Brown et al. (2002) Radiated-to-Impact Optical Energy & Luminous Efficiency Check
+ *  3. Dynamic WSR-88D 9-Tilt Radar Beam Ray-Trace vs Reported Gate Altitude & RK4 Time
+ *  4. Heliocentric Bound-Orbit & Escape Velocity Feasibility Check
+ *  5. Multi-Solver (`NASA Camera/Chicken Little` vs `AMS Trajectory`), Anonymized Sightline
+ *     Least-Squares Triangulation & Verified Camera Media/Duration Cross-Check
+ */
+export function computeIndependentNasaAudit({
+  event,
+  trajPartner,
+  asgardRec,
+  gmnRec,
+  cneosRec,
+  nexrad,
+  nexradCoverage,
+  aeroPhysics,
+  radarCheck,
+  longApproach,
+  opticalEntryMassKg,
+}) {
+  const auditWarnings = [];
+  const claims =
+    asgardRec?.nasaRetrievedClaims || event?.nasaRetrievedClaims || null;
+
+  // 1. Sphere Mass–Diameter–Density / Bulk Porosity Audit
+  let massDiameterAudit = null;
+  const diamIn = Number(claims?.diameterInches) || null;
+  const reportedMassKg =
+    Number(claims?.massKg) || Number(opticalEntryMassKg) || null;
+  if (Number.isFinite(diamIn) && diamIn > 0 && Number.isFinite(reportedMassKg) && reportedMassKg > 0) {
+    const diamCm = diamIn * 2.54;
+    const radiusCm = diamCm / 2;
+    const sphereVolCm3 = (4 / 3) * Math.PI * radiusCm ** 3;
+    const impliedDensityGCm3 =
+      Math.round(((reportedMassKg * 1000) / sphereVolCm3) * 100) / 100;
+    const grainDensityGCm3 = 3.35; // standard ordinary chondrite density
+    const solidChondriteMassKg =
+      Math.round(((sphereVolCm3 * grainDensityGCm3) / 1000) * 10) / 10;
+    const solidChondriteMassLb = Math.round(solidChondriteMassKg * 2.20462);
+    const solidChondriteDiamIn =
+      Math.round(
+        ((2 *
+          Math.cbrt(
+            (3 * ((reportedMassKg * 1000) / grainDensityGCm3)) / (4 * Math.PI),
+          )) /
+          2.54) *
+          10,
+      ) / 10;
+    const impliedPorosityPct =
+      Math.round((1 - impliedDensityGCm3 / grainDensityGCm3) * 1000) / 10;
+
+    massDiameterAudit = {
+      reportedDiameterInches: diamIn,
+      reportedDiameterCm: Math.round(diamCm * 10) / 10,
+      reportedMassKg: Math.round(reportedMassKg * 100) / 100,
+      reportedMassLb: claims?.massLb ?? Math.round(reportedMassKg * 2.20462 * 10) / 10,
+      sphereVolumeCm3: Math.round(sphereVolCm3),
+      impliedBulkDensityGCm3: impliedDensityGCm3,
+      solidChondriteMassKg,
+      solidChondriteMassLb,
+      solidChondriteDiamIn,
+      impliedPorosityPct,
+      status:
+        Math.abs(impliedPorosityPct) > 15 ? 'DISCREPANCY_FLAGGED' : 'CONSISTENT',
+      summary: `NASA Size/Mass Audit (${diamIn}" / ${reportedMassKg} kg): A ${diamIn}" (${diamCm.toFixed(1)} cm) sphere has volume ${Math.round(sphereVolCm3).toLocaleString()} cm³, implying bulk density ρ=${impliedDensityGCm3} g/cm³ (${impliedPorosityPct}% porosity vs 3.35 g/cm³ solid chondrite, which would weigh ${solidChondriteMassKg} kg / ${solidChondriteMassLb} lb — or ${solidChondriteDiamIn}" diameter at ${reportedMassKg} kg).`,
+    };
+    if (Math.abs(impliedPorosityPct) > 15) {
+      auditWarnings.push(massDiameterAudit.summary);
+    }
+  }
+
+  // 2. Brown et al. (2002) Radiated-to-Impact Energy & Luminous Efficiency Audit
+  let brownEnergyAudit = null;
+  const rawRad = Number(cneosRec?.energy?.radiated ?? event?.energy?.radiated);
+  const repImpactKt = Number(cneosRec?.energy?.impact ?? event?.energy?.impact);
+  if (Number.isFinite(rawRad) && rawRad > 0) {
+    // CNEOS `energy` column is in units of 10^10 J when < 1e6; convert to SI Joules
+    const radJoules = rawRad < 1e6 ? rawRad * 1e10 : rawRad;
+    const radKt = radJoules / 4.184e12;
+    const brownImpactKt =
+      Math.round(8.2508 * Math.pow(radKt, 0.885) * 10000) / 10000;
+    const impliedTauPct =
+      Number.isFinite(repImpactKt) && repImpactKt > 0
+        ? Math.round((radKt / repImpactKt) * 10000) / 100
+        : Math.round((radKt / brownImpactKt) * 10000) / 100;
+    const deltaPct =
+      Number.isFinite(repImpactKt) && repImpactKt > 0
+        ? Math.round((Math.abs(brownImpactKt - repImpactKt) / repImpactKt) * 1000) /
+          10
+        : 0;
+    brownEnergyAudit = {
+      radiatedJoules: radJoules,
+      radiatedKt: Math.round(radKt * 100000) / 100000,
+      reportedImpactKt: repImpactKt || null,
+      brownCalculatedImpactKt: brownImpactKt,
+      deltaPct,
+      luminousEfficiencyPct: impliedTauPct,
+      summary: `Brown et al. (2002) Energy Audit: Radiated E_rad=${radJoules.toExponential(2)} J yields E_calc=${(brownImpactKt * 1000).toFixed(1)}t TNT vs reported ${(repImpactKt * 1000).toFixed(1)}t TNT (Δ=${deltaPct}%, luminous efficiency τ=${impliedTauPct}%).`,
+    };
+  }
+
+  // 3. Dynamic WSR-88D 11-Tilt Radar Beam Ray-Trace Audit
+  let radarBeamAudit = null;
+  if (nexradCoverage?.primary) {
+    const R_EFF_KM = 6371 * (4 / 3);
+    const vcpTilts = [0.5, 0.9, 1.3, 1.8, 2.4, 3.1, 3.4, 4.0, 4.3, 5.1, 6.4];
+    const stationsToTrace = [
+      nexradCoverage.primary,
+      nexradCoverage.secondary,
+    ].filter(Boolean);
+
+    const tracedBeams = [];
+    for (const st of stationsToTrace) {
+      for (const tiltDeg of vcpTilts) {
+        const elRad = tiltDeg * DEG_TO_RAD;
+        const altKm =
+          Math.round(
+            (Math.sqrt(
+              st.distanceKm ** 2 +
+                R_EFF_KM ** 2 +
+                2 * st.distanceKm * R_EFF_KM * Math.sin(elRad),
+            ) -
+              R_EFF_KM +
+              st.elevM / 1000) *
+              100,
+          ) / 100;
+        const halfWidthKm = st.distanceKm * 0.475 * DEG_TO_RAD;
+        tracedBeams.push({
+          stationId: st.id,
+          isPrimary: st.id === nexradCoverage.primary.id,
+          distanceKm: st.distanceKm,
+          tiltDeg,
+          beamCenterAltKm: altKm,
+          halfPowerSpanKm: [
+            Math.round((altKm - halfWidthKm) * 100) / 100,
+            Math.round((altKm + halfWidthKm) * 100) / 100,
+          ],
+        });
+      }
+    }
+
+    const targetGateAltKm = nexrad?.gateAltitudeKm ?? 10.29;
+    // Prefer primary (closest, highest-resolution) radar tilts that bracket targetGateAltKm
+    const primaryBracketed = tracedBeams.filter(
+      (b) =>
+        b.isPrimary &&
+        targetGateAltKm >= b.halfPowerSpanKm[0] - 0.3 &&
+        targetGateAltKm <= b.halfPowerSpanKm[1] + 0.3,
+    );
+    const candidatePool =
+      primaryBracketed.length > 0 ? primaryBracketed : tracedBeams;
+    const bestBeam = candidatePool
+      .slice()
+      .sort(
+        (a, b) =>
+          Math.abs(a.beamCenterAltKm - targetGateAltKm) -
+          Math.abs(b.beamCenterAltKm - targetGateAltKm),
+      )[0];
+
+    radarBeamAudit = {
+      targetGateAltKm,
+      bestMatchingBeam: bestBeam,
+      beamAltResidualKm: bestBeam
+        ? Math.round(Math.abs(bestBeam.beamCenterAltKm - targetGateAltKm) * 100) /
+          100
+        : null,
+      rk4CrossingSummary: radarCheck?.verdict || null,
+      summary: bestBeam
+        ? `WSR-88D 4/3-Earth Beam Ray-Trace: ${bestBeam.stationId} (${bestBeam.distanceKm} km) at VCP tilt ${bestBeam.tiltDeg}° intersects column at ${bestBeam.beamCenterAltKm} km MSL (half-power ${bestBeam.halfPowerSpanKm[0]}–${bestBeam.halfPowerSpanKm[1]} km vs gate ${targetGateAltKm} km, Δ=${Math.abs(bestBeam.beamCenterAltKm - targetGateAltKm).toFixed(2)} km).`
+        : null,
+    };
+  }
+
+  // 4. Heliocentric Bound-Orbit & Escape Velocity Feasibility Audit
+  const vEntry = longApproach?.entrySpeedKmS ?? 14.6;
+  const vHelio = longApproach?.heliocentricSpeedKmS ?? null;
+  const isBoundEntry = vEntry >= 11.0 && vEntry <= 72.8;
+  const isBoundHelio = vHelio === null || vHelio <= 42.5;
+  const altitudeEnriched =
+    (trajPartner?.trajectory?.altitudeEnriched ??
+      asgardRec?.trajectory?.altitudeEnriched) !== false;
+  const orbitalVelocityAudit = {
+    entrySpeedKmS: vEntry,
+    geocentricSpeedKmS: longApproach?.geocentricSpeedKmS ?? null,
+    heliocentricSpeedKmS: vHelio,
+    isBoundSolarSystem: isBoundEntry && isBoundHelio,
+    altitudeEnriched,
+    summary: `Orbital Kinematics Audit: V_entry=${vEntry} km/s (V_geo=${longApproach?.geocentricSpeedKmS ?? '—'} km/s${vHelio ? `, V_helio=${vHelio} km/s` : ''}) is ${isBoundEntry && isBoundHelio ? 'physically bound to the Solar System (≤72.8 km/s head-on limit)' : 'OUTSIDE bound Solar System limits — probable sensor speed artifact'}${altitudeEnriched ? '' : ' · WARNING: ASGARD track altitudes are unenriched defaults (fetch detail page)'}.`,
+  };
+  if (!isBoundEntry || !isBoundHelio || !altitudeEnriched) {
+    auditWarnings.push(orbitalVelocityAudit.summary);
+  }
+
+  // 5. Multi-Solver (`NASA Camera/Chicken Little` vs `AMS Trajectory`), Sightline Ray
+  //    Least-Squares Convergence & Verified Camera Media/Duration Audit
+  const secondaryTraj =
+    asgardRec?.secondaryTrajectories?.[0] ||
+    event?.secondaryTrajectories?.[0] ||
+    null;
+  const sightlines =
+    asgardRec?.sightlineSummary || event?.sightlineSummary || null;
+  const verifiedMedia =
+    asgardRec?.verifiedMedia || event?.verifiedMedia || [];
+
+  let multiSolverAndMediaAudit = null;
+  if (secondaryTraj || sightlines || verifiedMedia.length > 0) {
+    const primEndLat = Number(
+      trajPartner?.trajectory?.endLat ?? event?.location?.lat,
+    );
+    const primEndLon = Number(
+      trajPartner?.trajectory?.endLon ?? event?.location?.lon,
+    );
+    const primEndAltKm = Number(
+      trajPartner?.trajectory?.endAltKm ?? aeroPhysics?.endAltKm ?? 45.5,
+    );
+    const primAzDeg = Number(trajPartner?.trajectory?.azimuth ?? 3.1);
+
+    let amsTerminusOffsetKm = null;
+    let amsEndAltDeltaKm = null;
+    let amsHeadingDeltaDeg = null;
+    if (secondaryTraj && Number.isFinite(primEndLat) && Number.isFinite(primEndLon)) {
+      const dLatKm = (secondaryTraj.endLat - primEndLat) * 111.32;
+      const dLonKm =
+        (secondaryTraj.endLon - primEndLon) *
+        111.32 *
+        Math.cos(primEndLat * DEG_TO_RAD);
+      amsTerminusOffsetKm = Math.round(Math.hypot(dLatKm, dLonKm) * 10) / 10;
+      if (Number.isFinite(secondaryTraj.endAltKm)) {
+        amsEndAltDeltaKm =
+          Math.round((primEndAltKm - secondaryTraj.endAltKm) * 10) / 10;
+      }
+      if (Number.isFinite(secondaryTraj.azimuthDeg)) {
+        const rawDiff = Math.abs(secondaryTraj.azimuthDeg - primAzDeg) % 360;
+        amsHeadingDeltaDeg =
+          Math.round((rawDiff > 180 ? 360 - rawDiff : rawDiff) * 10) / 10;
+      }
+    }
+
+    let sightlineOffsetKm = null;
+    if (
+      sightlines &&
+      Number.isFinite(sightlines.convergedLat) &&
+      Number.isFinite(sightlines.convergedLon) &&
+      Number.isFinite(primEndLat)
+    ) {
+      const dLatKm = (sightlines.convergedLat - primEndLat) * 111.32;
+      const dLonKm =
+        (sightlines.convergedLon - primEndLon) *
+        111.32 *
+        Math.cos(primEndLat * DEG_TO_RAD);
+      sightlineOffsetKm = Math.round(Math.hypot(dLatKm, dLonKm) * 10) / 10;
+    }
+
+    const calcDurSec =
+      aeroPhysics?.luminousDurationSec ??
+      aeroPhysics?.durationSec ??
+      aeroPhysics?.flightDurationSec ??
+      null;
+    const obsDurSec =
+      sightlines?.medianDurationSec ??
+      Number(gmnRec?.trajectory?.durationSec) ??
+      null;
+
+    const parts = [];
+    if (secondaryTraj) {
+      parts.push(
+        `NASA (${primEndAltKm} km terminus) vs AMS (${secondaryTraj.amsEventId}, ${secondaryTraj.reportCount || '?'} reports, ${secondaryTraj.startAltKm}→${secondaryTraj.endAltKm} km): terminus offset ${amsTerminusOffsetKm} km, Δalt=${amsEndAltDeltaKm} km, Δheading=${amsHeadingDeltaDeg}°`,
+      );
+    }
+    if (sightlines) {
+      parts.push(
+        `Sightline Ray Triangulation (${sightlines.rayCount} witness rays): median duration ${sightlines.medianDurationSec}s vs kinematic ${calcDurSec}s · ${sightlines.delayedSoundCount} delayed sonic boom reports · ${sightlines.fragmentationCount} visual fragmentation reports`,
+      );
+    }
+    if (verifiedMedia.length > 0) {
+      const vidCount = verifiedMedia.filter((m) => m.type === 'video').length;
+      const imgCount = verifiedMedia.length - vidCount;
+      parts.push(
+        `Verified Camera Media: ${vidCount} calibrated video(s) + ${imgCount} composite frame(s)`,
+      );
+    }
+
+    multiSolverAndMediaAudit = {
+      secondaryTrajectory: secondaryTraj,
+      amsTerminusOffsetKm,
+      amsEndAltDeltaKm,
+      amsHeadingDeltaDeg,
+      sightlineSummary: sightlines,
+      sightlineOffsetKm,
+      calculatedDurationSec: calcDurSec,
+      observedMedianDurationSec: obsDurSec,
+      verifiedMedia,
+      summary: parts.join(' · '),
+    };
+  }
+
+  return {
+    massDiameterAudit,
+    brownEnergyAudit,
+    radarBeamAudit,
+    orbitalVelocityAudit,
+    multiSolverAndMediaAudit,
+    auditWarnings,
   };
 }

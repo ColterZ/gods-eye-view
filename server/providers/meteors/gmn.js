@@ -114,6 +114,9 @@ export function parseGmnTrajectorySummary(
     const eccentricity = finiteOrNull(cols[25], 0, 10);
     const inclinationDeg = finiteOrNull(cols[27], 0, 180);
     const perihelionAu = finiteOrNull(cols[37], 0, 100);
+    const argPerihelionDeg = finiteOrNull(cols[31], 0, 360);
+    const ascendingNodeDeg = finiteOrNull(cols[33], 0, 360);
+    const aphelionAu = finiteOrNull(cols[39], 0, 10000);
     const tisserandJ = finiteOrNull(cols[49], -50, 50);
 
     const raApp = finiteOrNull(cols[51], 0, 360);
@@ -134,6 +137,14 @@ export function parseGmnTrajectorySummary(
     const medianFitErrArcsec = finiteOrNull(cols[81], 0, 36000);
     const stationCount = finiteOrNull(cols[84], 1, 500);
     const stations = cols[85] ? cols[85].trim() : null;
+    const measuredDecelerationKmS2 =
+      durationSec !== null &&
+      durationSec > 0.05 &&
+      vInit !== null &&
+      vAvg !== null &&
+      vInit >= vAvg
+        ? Math.round(((2 * (vInit - vAvg)) / durationSec) * 100) / 100
+        : null;
 
     const groundTrackDistance =
       latBeg !== null && lonBeg !== null
@@ -178,10 +189,13 @@ export function parseGmnTrajectorySummary(
         peakAltKm: peakHtKm,
         radiantRa: raGeo ?? raApp,
         radiantDec: decGeo ?? decApp,
+        apparentRadiantRa: raApp,
+        apparentRadiantDec: decApp,
         entryVelocity: vInit ?? vAvg,
         avgVelocity: vAvg,
         geocentricVelocity: vGeo,
         heliocentricVelocity: vHel,
+        measuredDecelerationKmS2,
         vx: null,
         vy: null,
         vz: null,
@@ -192,6 +206,7 @@ export function parseGmnTrajectorySummary(
           entryAngle !== null ? Math.round(entryAngle * 10) / 10 : null,
         groundTrackDistance,
         durationSec,
+        altitudeEnriched: true,
       },
 
       orbit: {
@@ -201,6 +216,9 @@ export function parseGmnTrajectorySummary(
         e: eccentricity,
         iDeg: inclinationDeg,
         qAu: perihelionAu,
+        aphelionAu,
+        argPerihelionDeg,
+        ascendingNodeDeg,
         tisserandJ,
         orbitalClass: classifyTisserandOrbit(tisserandJ),
       },

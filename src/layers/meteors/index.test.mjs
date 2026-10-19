@@ -1097,4 +1097,110 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     assert.ok(weibull.powerLawExponent > 1.6);
     assert.match(weibull.summary, /Weibull Cascade/);
   });
+
+  it('17. dynamically extracts NASA ASGARD claims, verified camera media, AMS secondary trajectories & sightlines, and executes the 5-part Independent NASA Audit + Long-Approach Trajectory', async () => {
+    const {
+      enrichAsgardEventFromDetailHtml,
+      parseAsgardEventSubMapHtml,
+    } = await import('../../../server/providers/meteors/asgard.js');
+    const {
+      computeLongApproachTrajectory,
+      evaluateEventSanityAndOverUnder,
+    } = await import('./validation.js');
+
+    const baseEvent = {
+      id: 'asgard:20260814-074833',
+      eventId: '20260814-074833',
+      source: 'asgard',
+      eventTime: '2026-08-14T07:48:33.000Z',
+      location: { lat: 47.8501, lon: -119.4084, altitude: 48 },
+      trajectory: {
+        startLat: 47.4117,
+        startLon: -119.4122,
+        startAltKm: 85,
+        endLat: 47.8501,
+        endLon: -119.4084,
+        endAltKm: 48,
+        azimuth: 0.4,
+        entryAngle: 37.2,
+        groundTrackDistance: 48.8,
+        altitudeEnriched: false,
+      },
+      energy: { radiated: 3.1e10, impact: 0.01 },
+      confidence: { fields: ['lat', 'lon', 'alt'] },
+    };
+
+    const sampleDetailHtml = `
+      <iframe id="encoder_iframe" src=/static/event_maps/skyfallmap_20260814-074833.html></iframe>
+      <p>Combined with data from three publicly accessible cameras and the Geostationary Lightning Mappers on the GOES satellites, a small piece of an asteroid about 16 inches in diameter weighing approximately 170 pounds travelled 36 miles before fragmenting. The fireball unleashed an energy of 10 tons of TNT. Doppler weather radar signatures of falling meteorites have been detected.</p>
+      <a href="/static/event_videos/20260814-074833/cut_20260814_074833_02A.mp4">
+        <img src="/media/CACHE/images/sample_cam02a.png" />
+      </a>
+      <table>
+        <tr><td>AMS Event</td><td><a href="https://www.amsmeteors.org/members/imo_view/event/2026/6582">6582-2026</a></td></tr>
+        <tr><td>Size</td><td>16 in</td></tr>
+        <tr><td>Origin</td><td>Asteroidal</td></tr>
+        <tr><td>Chicken Little Altitude</td><td>77.9 km → 45.5 km</td></tr>
+        <tr><td>Chicken Little Speed</td><td>14.6 km/s (32,700 mph)</td></tr>
+      </table>
+    `;
+
+    const sampleSubMapHtml = `
+      <th><a href="https://www.amsmeteors.org/members/imo_view/event/2026/6582">6582-2026</a></th>
+      <tbody>
+        <tr><td>Number of reports</td><td>312</td></tr>
+        <tr><td>Average Mag</td><td>-13.95</td></tr>
+        <tr><td>Start Lat/Lon</td><td>+47.4586, -119.7093</td></tr>
+        <tr><td>End Lat/Lon</td><td>+48.0369, -119.8070</td></tr>
+        <tr><td>Altitude</td><td>80.0 → 28.7 km</td></tr>
+      </tbody>
+      var poly_line_1 = L.polyline([[45.9317, -116.1691], [46.5335, -117.1573]], {}).addTo(fg);
+      var html_1 = $(\`<table><th><a href="https://www.amsmeteors.org/members/imo_view/report/437293">437293</a></th><tbody><tr><td>Name</td><td>ShouldNotBeStored</td></tr><tr><td>Duration</td><td>3.50s</td></tr><tr><td>Magnitude</td><td>-23.00</td></tr><tr><td>Delayed sound?</td><td>YES</td></tr><tr><td>Fragmentation?</td><td>YES</td></tr></tbody></table>\`)[0];
+      popup_1.setContent(html_1);
+      poly_line_1.bindPopup(popup_1);
+    `;
+
+    enrichAsgardEventFromDetailHtml(baseEvent, sampleDetailHtml, sampleSubMapHtml);
+
+    assert.equal(baseEvent.trajectory.altitudeEnriched, true);
+    assert.equal(baseEvent.trajectory.startAltKm, 77.9);
+    assert.equal(baseEvent.trajectory.endAltKm, 45.5);
+    assert.equal(baseEvent.trajectory.entryVelocity, 14.6);
+    assert.equal(baseEvent.nasaRetrievedClaims.diameterInches, 16);
+    assert.equal(baseEvent.nasaRetrievedClaims.massLb, 170);
+    assert.equal(baseEvent.nasaRetrievedClaims.massKg, 77.11);
+    assert.equal(baseEvent.nasaRetrievedClaims.energyTonsTnt, 10);
+    assert.equal(baseEvent.nasaRetrievedClaims.cameraCount, 3);
+    assert.equal(baseEvent.nasaRetrievedClaims.mentionsGoesGlm, true);
+    assert.equal(baseEvent.nasaRetrievedClaims.mentionsDopplerRadar, true);
+    assert.equal(baseEvent.verifiedMedia.length, 1);
+    assert.equal(baseEvent.verifiedMedia[0].cameraCode, '02A');
+    assert.equal(baseEvent.secondaryTrajectories.length, 1);
+    assert.equal(baseEvent.secondaryTrajectories[0].endAltKm, 28.7);
+    assert.equal(baseEvent.sightlineSummary.rayCount, 1);
+    assert.equal(baseEvent.sightlineSummary.delayedSoundCount, 1);
+    // Verify personal witness name was never stored
+    assert.ok(!JSON.stringify(baseEvent).includes('ShouldNotBeStored'));
+
+    // Long-Approach Hyperbolic Trajectory & Zenith Attraction
+    const longApp = computeLongApproachTrajectory(baseEvent);
+    assert.ok(longApp);
+    assert.ok(longApp.geocentricSpeedKmS < longApp.entrySpeedKmS);
+    assert.ok(longApp.zenithAttractionDeg > 0);
+    assert.equal(longApp.waypoints.length, 5);
+    assert.equal(longApp.waypoints.at(-1).altKm, 1000);
+
+    // 5-Part Independent NASA Audit
+    const val = evaluateEventSanityAndOverUnder(baseEvent, null, [baseEvent]);
+    assert.ok(val.nasaAudit);
+    assert.ok(val.nasaAudit.massDiameterAudit);
+    // 16" sphere at 77.11 kg has bulk density ~2.19 g/cm³ (~34.6% porosity vs 3.35 g/cm³ chondrite)
+    assert.equal(val.nasaAudit.massDiameterAudit.impliedBulkDensityGCm3, 2.19);
+    assert.equal(val.nasaAudit.massDiameterAudit.status, 'DISCREPANCY_FLAGGED');
+    assert.ok(val.nasaAudit.brownEnergyAudit);
+    assert.ok(val.nasaAudit.radarBeamAudit);
+    assert.equal(val.nasaAudit.orbitalVelocityAudit.isBoundSolarSystem, true);
+    assert.ok(val.nasaAudit.multiSolverAndMediaAudit);
+    assert.ok(val.nasaAudit.multiSolverAndMediaAudit.amsTerminusOffsetKm > 10);
+  });
 });

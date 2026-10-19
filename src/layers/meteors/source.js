@@ -43,5 +43,29 @@ export function createSource({ layerState, services, components, config, feed })
     return null;
   }
 
-  return { fetchSnapshot, fetchSounding };
+  async function fetchAsgardEventEnrichment(eventId, signal) {
+    if (!eventId) return null;
+    try {
+      const cleanId = String(eventId).replace(/^asgard:/, '');
+      const qs = new URLSearchParams({ eventId: cleanId }).toString();
+      const response = await fetch(`/api/nasa-skyfalls?${qs}`, {
+        signal,
+        headers: { Accept: 'application/json' },
+      });
+      if (response.ok) {
+        const payload = await response.json();
+        const events = Array.isArray(payload?.events) ? payload.events : [];
+        return (
+          events.find(
+            (e) => e.eventId === cleanId || e.id === `asgard:${cleanId}`,
+          ) || null
+        );
+      }
+    } catch {
+      // Optional enrichment
+    }
+    return null;
+  }
+
+  return { fetchSnapshot, fetchSounding, fetchAsgardEventEnrichment };
 }

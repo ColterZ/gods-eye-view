@@ -426,11 +426,85 @@ export function createMeteorPanel({
     if (val.weibullCascade?.summary) {
       lines.push(`💥 ${val.weibullCascade.summary}`);
     }
+    if (val.longApproach?.summary) {
+      lines.push(`☄ ${val.longApproach.summary}`);
+    }
+    if (val.nasaAudit) {
+      const na = val.nasaAudit;
+      if (na.massDiameterAudit?.summary) {
+        lines.push(`🧪 ${na.massDiameterAudit.summary}`);
+      }
+      if (na.brownEnergyAudit?.summary) {
+        lines.push(`⚡ ${na.brownEnergyAudit.summary}`);
+      }
+      if (na.radarBeamAudit?.summary) {
+        lines.push(`📡 ${na.radarBeamAudit.summary}`);
+      }
+      if (na.orbitalVelocityAudit?.summary) {
+        lines.push(`🪐 ${na.orbitalVelocityAudit.summary}`);
+      }
+      if (na.multiSolverAndMediaAudit?.summary) {
+        lines.push(`🎥 ${na.multiSolverAndMediaAudit.summary}`);
+      }
+    }
     if (Array.isArray(val.sanityWarnings) && val.sanityWarnings.length > 0) {
       lines.push(`🔍 Sanity Checks: ${val.sanityWarnings.join(' | ')}`);
     }
 
     pre.textContent = lines.join('\n');
+
+    // Render Long-Approach Waypoint Table (1000 km -> 120 km -> Atmospheric Entry)
+    if (Array.isArray(val.longApproach?.waypoints) && val.longApproach.waypoints.length > 0) {
+      const subTitle = el('div', 'meteor-subsection-title', content);
+      subTitle.textContent = `Pre-Atmospheric Long-Approach Arc (Δz_g +${val.longApproach.zenithAttractionDeg}° Zenith Attraction)`;
+      subTitle.style.cssText = 'font-size:10px;font-weight:600;color:#c084fc;margin:8px 0 4px;';
+
+      const wpTable = el('table', 'meteor-param-table', content);
+      const wpHead = el('thead', null, wpTable);
+      const wpHdrTr = el('tr', null, wpHead);
+      for (const h of ['Alt (km)', 'T-Entry', 'Speed', 'Pitch', 'Up-Range (lat, lon)']) {
+        el('th', null, wpHdrTr).textContent = h;
+      }
+      const wpBody = el('tbody', null, wpTable);
+      for (const wp of val.longApproach.waypoints.slice().reverse()) {
+        const tr = el('tr', null, wpBody);
+        el('td', null, tr).textContent = `${wp.altKm} km`;
+        el('td', null, tr).textContent = `${wp.tMinusSec}s`;
+        el('td', null, tr).textContent = `${wp.speedKmS} km/s`;
+        el('td', null, tr).textContent = `${wp.pitchAngleDeg}°`;
+        const coordCell = el('td', null, tr);
+        coordCell.textContent = `${wp.lat.toFixed(3)}, ${wp.lon.toFixed(3)}`;
+      }
+    }
+
+    // Render Verified Camera Media (.mp4 videos and .png composite frames) when retrieved
+    const mediaList = val.nasaAudit?.multiSolverAndMediaAudit?.verifiedMedia || [];
+    if (mediaList.length > 0) {
+      const mediaTitle = el('div', 'meteor-subsection-title', content);
+      mediaTitle.textContent = `Verified Camera Videos & Calibration Frames (${mediaList.length})`;
+      mediaTitle.style.cssText = 'font-size:10px;font-weight:600;color:#38bdf8;margin:8px 0 4px;';
+
+      const mediaGrid = el('div', 'meteor-verified-media-grid', content);
+      mediaGrid.style.cssText = 'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:4px;';
+      for (const item of mediaList.slice(0, 6)) {
+        const card = el('a', 'meteor-media-card', mediaGrid);
+        card.href = item.videoUrl || item.imageUrl || '#';
+        card.target = '_blank';
+        card.rel = 'noopener noreferrer';
+        card.style.cssText = 'display:block;background:rgba(15,23,42,0.75);border:1px solid rgba(56,189,248,0.3);border-radius:4px;padding:4px;text-decoration:none;color:#e2e8f0;font-size:9.5px;';
+        if (item.thumbnailUrl) {
+          const img = document.createElement('img');
+          img.src = item.thumbnailUrl;
+          img.alt = item.label || 'Meteor Camera Frame';
+          img.loading = 'lazy';
+          img.style.cssText = 'width:100%;height:68px;object-fit:cover;border-radius:3px;display:block;margin-bottom:3px;';
+          card.appendChild(img);
+        }
+        const lbl = el('div', null, card);
+        lbl.textContent = `${item.type === 'video' ? '🎬 ' : '🖼 '}${item.label || 'Camera Media'}`;
+      }
+    }
+
     return section;
   }
 

@@ -110,11 +110,32 @@ export function createControls({ layerState, services, components, config }) {
     }
     layerState.notify();
     try {
-      const sounding = await components.source.fetchSounding({
-        lat: ev.location.lat,
-        lon: ev.location.lon,
-        timeIso: ev.eventTime,
-      });
+      const asgardPartner =
+        ev.source === 'asgard'
+          ? ev
+          : (ev.possibleMatches || [])
+              .map((m) => layerState._events.find((e) => e.id === m.id))
+              .find((e) => e && e.source === 'asgard') || null;
+      const needsAsgardEnrichment =
+        asgardPartner &&
+        (!asgardPartner.sightlineSummary || !asgardPartner.nasaRetrievedClaims) &&
+        typeof components.source.fetchAsgardEventEnrichment === 'function';
+
+      const [sounding, enrichedAsgard] = await Promise.all([
+        components.source.fetchSounding({
+          lat: ev.location.lat,
+          lon: ev.location.lon,
+          timeIso: ev.eventTime,
+        }),
+        needsAsgardEnrichment
+          ? components.source.fetchAsgardEventEnrichment(
+              asgardPartner.eventId || asgardPartner.id,
+            )
+          : Promise.resolve(null),
+      ]);
+      if (enrichedAsgard && asgardPartner) {
+        Object.assign(asgardPartner, enrichedAsgard);
+      }
       if (
         layerState._destroyed ||
         !layerState._darkFlightActive ||
@@ -229,6 +250,13 @@ export function createControls({ layerState, services, components, config }) {
         }
         if (layerState._enabled) {
           components.rendering.update(layerState._filteredEvents);
+          if (
+            layerState._darkFlightActive &&
+            layerState._selectedEventId &&
+            layerState._darkFlightResult?.eventId !== layerState._selectedEventId
+          ) {
+            executeDarkFlightForSelected();
+          }
         }
         changed = true;
       }

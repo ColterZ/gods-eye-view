@@ -1126,6 +1126,103 @@ export function createRendering({ layerState, services, components, config }) {
       }
     }
 
+    // 7. Render Pre-Atmospheric Long-Approach Hyperbolic Arc (1000 km -> 120 km -> Entry)
+    const longApp = df.validation?.longApproach;
+    if (Array.isArray(longApp?.waypoints) && longApp.waypoints.length >= 2) {
+      const appPositions = longApp.waypoints
+        .slice()
+        .reverse()
+        .map((wp) =>
+          Cesium.Cartesian3.fromDegrees(wp.lon, wp.lat, wp.altKm * 1000),
+        );
+      const appArcEnt = layerState._dataSource.entities.add({
+        id: `df:${df.eventId}:long-approach-arc`,
+        polyline: {
+          positions: appPositions,
+          width: 2.2,
+          material: new Cesium.PolylineDashMaterialProperty({
+            color: Cesium.Color.fromCssColorString('#c084fc').withAlpha(0.85),
+            dashLength: 14,
+          }),
+          arcType: Cesium.ArcType.NONE,
+        },
+      });
+      layerState._darkFlightEntities.push(appArcEnt);
+
+      const entry120 = longApp.entryInterface120Km;
+      if (entry120) {
+        const entry120Ent = layerState._dataSource.entities.add({
+          id: `df:${df.eventId}:entry-interface-120km`,
+          position: Cesium.Cartesian3.fromDegrees(
+            entry120.lon,
+            entry120.lat,
+            entry120.altKm * 1000,
+          ),
+          point: {
+            pixelSize: 7,
+            color: Cesium.Color.fromCssColorString('#c084fc'),
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 1.5,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          label:
+            (layerState._groundLabelsMode || 'compact') !== 'hidden'
+              ? {
+                  text: `120km Entry Interface (${entry120.speedKmS} km/s · Δz_g +${longApp.zenithAttractionDeg}°)`,
+                  font: '600 9.5px ui-monospace, SFMono-Regular, Menlo, monospace',
+                  fillColor: Cesium.Color.fromCssColorString('#e9d5ff'),
+                  outlineColor: Cesium.Color.BLACK,
+                  outlineWidth: 2,
+                  style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                  showBackground: true,
+                  backgroundColor: new Cesium.Color(0.08, 0.03, 0.14, 0.75),
+                  backgroundPadding: new Cesium.Cartesian2(5, 2),
+                  pixelOffset: new Cesium.Cartesian2(0, -14),
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                  scaleByDistance: new Cesium.NearFarScalar(15000, 1.0, 600000, 0.45),
+                }
+              : undefined,
+        });
+        layerState._darkFlightEntities.push(entry120Ent);
+      }
+    }
+
+    // 8. Render Secondary Trajectory (e.g. AMS Eyewitness Trajectory) & Sightline Rays when retrieved
+    const multiAudit = df.validation?.nasaAudit?.multiSolverAndMediaAudit;
+    const secTraj = multiAudit?.secondaryTrajectory;
+    if (
+      secTraj &&
+      Number.isFinite(secTraj.startLat) &&
+      Number.isFinite(secTraj.endLat)
+    ) {
+      const secStartAltM = (Number(secTraj.startAltKm) || 80) * 1000;
+      const secEndAltM = (Number(secTraj.endAltKm) || 28.7) * 1000;
+      const secLineEnt = layerState._dataSource.entities.add({
+        id: `df:${df.eventId}:secondary-traj`,
+        polyline: {
+          positions: [
+            Cesium.Cartesian3.fromDegrees(
+              secTraj.startLon,
+              secTraj.startLat,
+              secStartAltM,
+            ),
+            Cesium.Cartesian3.fromDegrees(
+              secTraj.endLon,
+              secTraj.endLat,
+              secEndAltM,
+            ),
+          ],
+          width: 2.2,
+          material: new Cesium.PolylineDashMaterialProperty({
+            color: Cesium.Color.fromCssColorString('#f97316').withAlpha(0.82),
+            dashLength: 10,
+          }),
+          arcType: Cesium.ArcType.NONE,
+        },
+      });
+      layerState._darkFlightEntities.push(secLineEnt);
+    }
+
     publishOverlayCards();
     requestRender();
   }
