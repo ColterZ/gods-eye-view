@@ -28,8 +28,8 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
      * 214 g recovered across 6 stones is consistent with this range.
      */
     survivalEstimate: {
-      entryMassKg: 34.9,
-      entryMassLb: 77.1,
+      entryMassKg: 77.1,
+      entryMassLb: 170,
       entrySpeedKmS: 14.6,
       energyTntTons: 10,
       destructionRangePct: [92.5, 98.8],

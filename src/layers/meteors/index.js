@@ -25,7 +25,7 @@ export function createMeteorsLayer({ services, feed, ...config }) {
 
   // Mount the right-rail context panel for meteor/dark-flight controls.
   // Created eagerly (cheap DOM) and hidden/shown via setEnabled; it syncs its
-  // content from the layer's row-controls descriptor on every refresh.
+  // content from the layer's row-controls descriptor on every state change.
   if (typeof document !== 'undefined') {
     const container = document.getElementById('meteor-panel');
     const countBadge = document.getElementById('meteor-panel-count');
@@ -35,9 +35,15 @@ export function createMeteorsLayer({ services, feed, ...config }) {
         container,
         countBadge,
         body,
-        setLayerParams: (id, params, options) =>
-          context.services?.setLayerParams?.(id, params, options),
+        // The panel is the layer's own presentation surface, so it dispatches
+        // straight into this layer's setParams — there is no application-level
+        // setLayerParams service to route through.
+        setLayerParams: (_id, params) =>
+          components.controls.methods.setParams(params),
       });
+      // The controls module captured `components` by reference, so a panel
+      // created after it still gets published through the same object.
+      components.controls.pushPanel?.();
     }
   }
 

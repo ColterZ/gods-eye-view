@@ -140,12 +140,64 @@ export const DOCUMENTED_FOUND_STONES = Object.freeze({
 });
 
 const customStonesByEventId = new Map();
+const STORAGE_PREFIX = 'godsEyeView.v1.foundStones.';
+
+function readStoredStones(ownerId) {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(`${STORAGE_PREFIX}${ownerId}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredStones(ownerId, stones) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (stones === null) {
+      localStorage.removeItem(`${STORAGE_PREFIX}${ownerId}`);
+    } else {
+      localStorage.setItem(
+        `${STORAGE_PREFIX}${ownerId}`,
+        JSON.stringify(stones),
+      );
+    }
+  } catch {
+    // Ignore storage quota errors in restricted contexts
+  }
+}
+
+/**
+ * Resolve the canonical event ID that owns found stones for an event or its corroborated partners.
+ */
+export function resolveCanonicalStoneOwnerId(event) {
+  if (!event) return null;
+  if (typeof event === 'string') return event;
+  if (
+    customStonesByEventId.has(event.id) ||
+    DOCUMENTED_FOUND_STONES[event.id]
+  ) {
+    return event.id;
+  }
+  if (Array.isArray(event.possibleMatches)) {
+    for (const m of event.possibleMatches) {
+      if (customStonesByEventId.has(m.id) || DOCUMENTED_FOUND_STONES[m.id]) {
+        return m.id;
+      }
+    }
+  }
+  return event.id;
+}
 
 /**
  * Register or replace custom found stones for an eventId (supports fine-tuning
  * from user-provided stone maps).
  */
-export function setCustomFoundStones(eventId, stones) {
+export function setCustomFoundStones(eventOrId, stones) {
+  const eventId = resolveCanonicalStoneOwnerId(eventOrId);
   if (!eventId || !Array.isArray(stones)) return [];
   const normalized = stones
     .map((s, idx) => {
@@ -162,13 +214,14 @@ export function setCustomFoundStones(eventId, stones) {
         lon,
         massGrams,
         densityGcm3: Number(s.densityGcm3 ?? s.density) || 3.35,
-        type: s.type || 'Chondrite',
+        type: s.type || 'Ordinary Chondrite',
         shape: s.shape || 'subangular',
         notes: s.notes || 'User-supplied found stone coordinate',
       };
     })
     .filter(Boolean);
   customStonesByEventId.set(eventId, normalized);
+  writeStoredStones(eventId, normalized);
   return normalized;
 }
 
@@ -177,23 +230,71 @@ export function setCustomFoundStones(eventId, stones) {
  */
 export function getFoundStonesForEvent(event) {
   if (!event) return [];
-  if (customStonesByEventId.has(event.id)) {
-    return customStonesByEventId.get(event.id);
+  const ownerId = resolveCanonicalStoneOwnerId(event);
+  if (customStonesByEventId.has(ownerId)) {
+    return customStonesByEventId.get(ownerId);
   }
-  if (DOCUMENTED_FOUND_STONES[event.id]) {
-    return DOCUMENTED_FOUND_STONES[event.id];
+  const stored = readStoredStones(ownerId);
+  if (stored) {
+    customStonesByEventId.set(ownerId, stored);
+    return stored;
   }
-  if (Array.isArray(event.possibleMatches)) {
-    for (const m of event.possibleMatches) {
-      if (customStonesByEventId.has(m.id)) {
-        return customStonesByEventId.get(m.id);
-      }
-      if (DOCUMENTED_FOUND_STONES[m.id]) {
-        return DOCUMENTED_FOUND_STONES[m.id];
-      }
-    }
+  if (DOCUMENTED_FOUND_STONES[ownerId]) {
+    return DOCUMENTED_FOUND_STONES[ownerId].map((s) => ({ ...s }));
   }
   return [];
+}
+
+/**
+ * Add a new found stone to an event's recovery list.
+ */
+export function addFoundStoneForEvent(event, stoneSpec = {}) {
+  const ownerId = resolveCanonicalStoneOwnerId(event);
+  if (!ownerId) return [];
+  const current = getFoundStonesForEvent(event).map((s) => ({ ...s }));
+  const nextIdx = current.length + 1;
+  const massGrams = Math.max(0.5, Number(stoneSpec.massGrams ?? 25) || 25);
+  const defaultLat =
+    Number(stoneSpec.lat) ||
+    (current[0] ? Number((current[0].lat - 0.002).toFixed(5)) : Number(event?.location?.lat || 0));
+  const defaultLon =
+    Number(stoneSpec.lon) ||
+    (current[0] ? Number(current[0].lon.toFixed(5)) : Number(event?.location?.lon || 0));
+  current.push({
+    id: stoneSpec.id || `stone:${ownerId}:${Date.now()}-${nextIdx}`,
+    label: stoneSpec.label || `${massGrams}g - Find #${nextIdx}`,
+    lat: defaultLat,
+    lon: defaultLon,
+    massGrams,
+    densityGcm3: Number(stoneSpec.densityGcm3) || 3.35,
+    type: stoneSpec.type || 'Ordinary Chondrite',
+    shape: stoneSpec.shape || 'subangular',
+    notes: stoneSpec.notes || 'Added via Recovery Workbench',
+  });
+  return setCustomFoundStones(ownerId, current);
+}
+
+/**
+ * Delete a found stone by ID from an event's recovery list.
+ */
+export function deleteFoundStoneForEvent(event, stoneId) {
+  const ownerId = resolveCanonicalStoneOwnerId(event);
+  if (!ownerId) return [];
+  const current = getFoundStonesForEvent(event)
+    .filter((s) => s.id !== stoneId)
+    .map((s) => ({ ...s }));
+  return setCustomFoundStones(ownerId, current);
+}
+
+/**
+ * Reset an event's found stones back to the documented catalog defaults.
+ */
+export function resetFoundStonesForEvent(event) {
+  const ownerId = resolveCanonicalStoneOwnerId(event);
+  if (!ownerId) return [];
+  customStonesByEventId.delete(ownerId);
+  writeStoredStones(ownerId, null);
+  return getFoundStonesForEvent(event);
 }
 
 /**

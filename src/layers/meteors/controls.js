@@ -574,18 +574,10 @@ export function createControls({ layerState, services, components, config }) {
         !!document.getElementById?.('right-context-rail');
 
       if (!options?.forRightPanel && hasRightRail) {
-        // Push the full meteor descriptor to the right-rail panel, including
-        // the dark-flight, stone-fit and validation sub-blocks that the panel
-        // renders as collapsible sections.
-        const panelDescriptor = Object.assign({}, fullDescriptor, {
-          darkFlight: layerState._darkFlightResult || null,
-          stoneFit: (layerState._darkFlightResult || {}).stoneFit || null,
-          validation: (layerState._darkFlightResult || {}).validation || null,
-        });
-        components.panel?.sync?.(panelDescriptor);
-        // Show / hide the meteor panel based on whether the layer is enabled.
-        if (layerState._enabled) components.panel?.setEnabled?.(true);
-        else components.panel?.setEnabled?.(false);
+        // The right-rail panel owns this layer's controls, so the left row
+        // collapses to a compact readout. `pushPanel()` (driven from
+        // notify()) is what feeds the panel — polling here would only ever
+        // fire at mount, before the layer is enabled.
         return {
           readout: true,
           chips: [],
@@ -1092,5 +1084,38 @@ export function createControls({ layerState, services, components, config }) {
     },
   };
 
-  return { methods };
+  /**
+   * Push the current row-controls descriptor plus the meteor-only sub-blocks
+   * (dark flight, stone fit, validation) to the right-rail panel, and keep the
+   * panel's visibility in step with the layer.
+   *
+   * This cannot ride on the framework's `getRowControls` polling: the meteor
+   * layer reports `readout: true`, so LayerPanel never builds a
+   * `.data-toggle-controls` node and its refresh path never re-polls
+   * `getRowControls`. Driving the panel from `notify()` is what keeps it live.
+   */
+  function pushPanel() {
+    const panel = components.panel;
+    if (!panel?.sync) return;
+    const df = layerState._darkFlightResult || null;
+    panel.sync(
+      Object.assign({}, methods._buildFullRowControls(), {
+        darkFlight: df,
+        stoneFit: df?.stoneFit || null,
+        validation: df?.validation || null,
+      }),
+    );
+    panel.setEnabled?.(!!layerState._enabled);
+  }
+
+  // Every state change already notifies the framework; mirror it to the panel.
+  const notifyBase = layerState.notify;
+  layerState.notify = () => {
+    notifyBase?.();
+    pushPanel();
+  };
+  // First paint: the layer mounts disabled, so publish the empty browser view.
+  pushPanel();
+
+  return { methods, pushPanel };
 }

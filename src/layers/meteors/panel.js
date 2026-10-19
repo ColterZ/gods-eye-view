@@ -37,6 +37,8 @@ export function createMeteorPanel({
   let currentStoneFit = null;
   let currentSelected = null;
   let currentDarkFlightActive = false;
+  let lastSignature = null;
+  let lastSelected = null;
 
   /* ------------------------------------------------------------------ */
   /*  Small DOM helpers                                                 */
@@ -228,43 +230,50 @@ export function createMeteorPanel({
       el('td', 'meteor-param-value', tr).textContent = value;
     }
 
-    /* Auto-Fit tuning deltas */
-    if (df.stoneFit?.tuning) {
+    /* Auto-Fit parameter report: BASELINE → FITTED, with the delta and the
+       solver's own bounds. `parameterReport` is authored by darkFlight.js so
+       the labels, units and semantic readings stay in one place. */
+    const report = df.stoneFit?.parameterReport;
+    if (Array.isArray(report) && report.length > 0) {
       const sf = df.stoneFit;
-      const tuning = sf.tuning;
       const summary = el('div', 'meteor-autofit-summary', content);
       el('span', 'meteor-autofit-label', summary).textContent = t('Auto-Fit Tuning');
-      el('span', 'meteor-autofit-rms', summary).textContent = `RMS ${sf.baselineRmsM}m → ${sf.bestRmsM}m`;
+      el('span', 'meteor-autofit-rms', summary).textContent =
+        `RMS ${sf.baselineRmsM}m → ${sf.bestRmsM}m`;
+      el('span', 'meteor-autofit-hint', summary).textContent =
+        t('edit any value to override the fit');
 
-      const tuneTable = el('table', 'meteor-param-table', content);
+      const tuneTable = el('table', 'meteor-param-table meteor-tune-table', content);
+      const tuneHead = el('thead', null, tuneTable);
+      const tuneHeadRow = el('tr', null, tuneHead);
+      for (const h of ['Parameter', 'Baseline', 'Fitted', 'Δ Change']) {
+        el('th', null, tuneHeadRow).textContent = h;
+      }
       const tuneTbody = el('tbody', null, tuneTable);
-      const params = [
-        { key: 'windScale', label: 'Wind Scale', unit: '×', editable: true },
-        { key: 'shapeFactor', label: 'Shape Factor', unit: '', editable: true },
-        { key: 'speedScale', label: 'Speed Scale', unit: '×', editable: true },
-        { key: 'azimuthDeltaDeg', label: 'Azimuth Δ', unit: '°', editable: true },
-        { key: 'upperFlareOffsetKm', label: 'Upper Flare Offset', unit: 'km', editable: true },
-        { key: 'terminusShiftM', label: 'Terminus Shift', unit: 'm', editable: true },
-      ];
-      for (const p of params) {
+
+      for (const p of report) {
         const tr = el('tr', null, tuneTbody);
-        el('th', 'meteor-param-label', tr).textContent = p.label;
-        const before = el('td', 'meteor-param-before', tr);
-        before.textContent = (p.key === 'azimuthDeltaDeg' || p.key === 'terminusShiftM' || p.key === 'upperFlareOffsetKm')
-          ? (p.key === 'upperFlareOffsetKm'
-            ? (tuning.upperFlareOffsetKm > 0 ? `+${tuning.upperFlareOffsetKm}` : tuning.upperFlareOffsetKm) + ' km'
-            : (tuning[p.key] >= 0 && p.key === 'azimuthDeltaDeg' ? '+' : '') + tuning[p.key] + (p.unit || ''))
-          : (tuning[p.key] >= 0 ? tuning[p.key] : tuning[p.key]) + (p.unit || '');
-        const after = el('td', 'meteor-param-after', tr);
-        after.textContent = tuning[p.key] + (p.unit || '');
-        if (p.editable) {
-          const editor = input('number', `meteor-tuning-edit meteor-tuning-${p.key}`, null);
-          editor.dataset.paramKey = p.key;
-          editor.value = String(tuning[p.key]);
-          editor.step = p.key.includes('Scale') ? '0.01' : '0.1';
-          after.innerHTML = '';
-          after.appendChild(editor);
-        }
+        tr.dataset.paramKey = p.key;
+        el('th', 'meteor-param-label', tr).textContent = p.label || p.key;
+
+        el('td', 'meteor-param-before', tr).textContent = p.beforeFormatted ?? '—';
+
+        const afterCell = el('td', 'meteor-param-after', tr);
+        const editor = input('number', `meteor-tuning-edit meteor-tuning-${p.key}`, null);
+        editor.dataset.paramKey = p.key;
+        editor.value = String(p.afterValue ?? '');
+        if (Number.isFinite(p.min)) editor.min = String(p.min);
+        if (Number.isFinite(p.max)) editor.max = String(p.max);
+        if (Number.isFinite(p.step)) editor.step = String(p.step);
+        afterCell.appendChild(editor);
+        const reading = el('span', 'meteor-param-reading', afterCell);
+        reading.textContent = p.afterFormatted ?? '';
+        reading.title = p.afterFormatted ?? '';
+
+        const changed = Number(p.afterValue) !== Number(p.beforeValue);
+        tr.classList.toggle('meteor-param-changed', changed);
+        const delta = el('td', 'meteor-param-delta', tr);
+        delta.textContent = changed ? p.deltaFormatted ?? '—' : '—';
       }
     }
 
@@ -291,7 +300,7 @@ export function createMeteorPanel({
     const table = el('table', 'meteor-stone-table', content);
     const thead = el('thead', null, table);
     const headerTr = el('tr', null, thead);
-    for (const h of ['Stone', 'Mass (g)', 'Latitude', 'Longitude', 'Type', 'Fragment', 'Actions']) {
+    for (const h of ['Stone', 'Mass (g)', 'Latitude', 'Longitude', 'Type', 'Fragment', 'Δ Residual', 'Actions']) {
       el('th', null, headerTr).textContent = h;
     }
     const tbody = el('tbody', null, table);
@@ -342,6 +351,9 @@ export function createMeteorPanel({
       const fragCell = el('td', null, tr);
       fragCell.textContent = c.fragmentationEpisode || '';
 
+      const errorM = el('td', 'meteor-stone-error', tr);
+      errorM.textContent = `Δ ${c.errorM}m`;
+
       const actionCell = el('td', 'meteor-stone-actions', tr);
       const flyBtn = btn('🛫', 'meteor-stone-fly', t('Fly to stone'));
       flyBtn.dataset.stoneId = tr.dataset.stoneId;
@@ -350,9 +362,6 @@ export function createMeteorPanel({
       delBtn.dataset.stoneId = tr.dataset.stoneId;
       delBtn.title = t('Remove this found stone');
       actionCell.append(flyBtn, delBtn);
-
-      const errorM = el('td', 'meteor-stone-error', tr);
-      errorM.textContent = `Δ ${c.errorM}m`;
     }
 
     /* Add new stone row */
@@ -470,9 +479,50 @@ export function createMeteorPanel({
   /* ------------------------------------------------------------------ */
   function sync(descriptor) {
     if (destroyed || !descriptor) return;
+
+    /* A rebuild replaces every node, so typing in a stone field would lose
+       focus and caret on the next notify. Capture the active editor first. */
+    const active = document.activeElement;
+    const focused = active && body.contains(active)
+      ? {
+          field: active.dataset?.field || null,
+          paramKey: active.dataset?.paramKey || null,
+          stoneId: active.dataset?.stoneId || null,
+          className: active.className,
+          value: active.value,
+          start: active.selectionStart,
+          end: active.selectionEnd,
+        }
+      : null;
+
+    /* Skip the rebuild when nothing the panel renders has changed — a dark
+       flight run notifies several times and each rebuild is a full teardown. */
+    const signature = JSON.stringify([
+      (descriptor.chips || []).map((c) => [c.id, c.active, c.label, c.busy]),
+      descriptor.info,
+      (descriptor.list?.items || []).map((i) => [i.id, i.lead, i.active]),
+      (descriptor.legend || []).map((l) => [l.label, l.count]),
+      descriptor.darkFlight ? Object.keys(descriptor.darkFlight).length : 0,
+      descriptor.stoneFit?.bestRmsM ?? null,
+      descriptor.stoneFit?.comparisons?.length ?? null,
+      descriptor.validation ? Object.keys(descriptor.validation).length : 0,
+    ]);
+    if (signature === lastSignature && currentSelected === lastSelected) {
+      currentDescriptor = descriptor;
+      return;
+    }
+    lastSignature = signature;
+
     currentDescriptor = descriptor;
     currentChipsById = new Map((descriptor.chips || []).map((c) => [c.id, c]));
     currentListItems = descriptor.list?.items || [];
+
+    /* An event is selected exactly when the descriptor offers its per-event
+       chips (CLEAR / FOCUS / dark flight); the browser view offers none. */
+    currentSelected = currentChipsById.has('clear-selected')
+      ? descriptor.list?.items?.find((i) => i.active)?.id || true
+      : null;
+    lastSelected = currentSelected;
 
     /* Extract dark-flight-specific blocks from the info text or state */
     currentDarkFlightActive = currentChipsById.has('toggle-dark-flight')
@@ -487,6 +537,14 @@ export function createMeteorPanel({
     );
     if (filterChips.length > 0) {
       body.appendChild(renderFilterSection(filterChips));
+    }
+
+    /* Scene & action chips (DARK FLIGHT, PLAY SCENE, FOCUS, CLEAR, modes) */
+    const actionChips = descriptor.chips.filter(
+      (c) => !c.id.startsWith('window-') && !c.id.startsWith('source-'),
+    );
+    if (actionChips.length > 0) {
+      body.appendChild(renderActionSection(actionChips));
     }
 
     /* Legend */
@@ -552,6 +610,31 @@ export function createMeteorPanel({
         ? descriptor.legend.reduce((sum, l) => sum + (l.count || 0), 0)
         : currentListItems.length);
     }
+
+    /* Put the caret back where the operator left it. */
+    if (focused) {
+      const restored = [...body.querySelectorAll('input')].find(
+        (node) =>
+          node.className === focused.className &&
+          (focused.stoneId
+            ? node.dataset.stoneId === focused.stoneId
+            : true) &&
+          (focused.paramKey
+            ? node.dataset.paramKey === focused.paramKey
+            : true) &&
+          (focused.field ? node.dataset.field === focused.field : true),
+      );
+      if (restored) {
+        restored.focus();
+        if (typeof focused.start === 'number') {
+          try {
+            restored.setSelectionRange(focused.start, focused.end);
+          } catch {
+            /* number inputs reject setSelectionRange; focus is enough. */
+          }
+        }
+      }
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -615,18 +698,20 @@ export function createMeteorPanel({
     const rawValue = inputEl.value;
 
     if (stoneId && field) {
-      /* Collect all stone edits and dispatch as one setFoundStones call */
+      /* The panel renders comparison wrappers ({ stone, errorM, ... }), but
+         setCustomFoundStones expects a flat array of stone specs — pass the
+         unwrapped stones or every entry fails validation and is dropped. */
       const updated = (currentStones || []).map((c) => {
-        if ((c.stone.id || c.stone.label) === stoneId) {
-          return {
-            ...c,
-            stone: {
-              ...c.stone,
-              [field]: field === 'massGrams' ? parseFloat(rawValue) : rawValue,
-            },
-          };
-        }
-        return c;
+        const stone = c.stone || c;
+        const key = stone.id || stone.label;
+        if (key !== stoneId) return { ...stone };
+        return {
+          ...stone,
+          [field]:
+            field === 'massGrams' || field === 'latitude' || field === 'longitude'
+              ? parseFloat(rawValue)
+              : rawValue,
+        };
       });
       setLayerParams('meteors', { setFoundStones: updated }, { origin: 'user' });
     } else if (paramKey) {

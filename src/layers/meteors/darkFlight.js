@@ -516,7 +516,7 @@ export function evaluateSurvivalPhysics(event) {
 export function runMultiModelDarkFlight(
   event,
   sounding,
-  { allEvents = [], nFragments = 160, autoFit = false } = {},
+  { allEvents = [], nFragments = 160, autoFit = false, customTuning = null } = {},
 ) {
   const physicsGate = evaluateSurvivalPhysics(event);
   if (!physicsGate.survivable) {
@@ -743,75 +743,227 @@ export function runMultiModelDarkFlight(
 
   // Check for documented or user-supplied Found Stones for this fall (or corroborated partners)
   const foundStones = getFoundStonesForEvent(event);
+  const sensorBaseLat = effectiveLat;
+  const sensorBaseLon = effectiveLon;
+  const sensorBaseAltM = effectiveAltM;
+  const sensorBaseSpeedMs = effectiveSpeedMs;
+  const sensorBaseAzimuthDeg = effectiveAzimuthDeg;
+  const sensorBaseShapeFactor = effectiveShapeFactor;
   let stoneFit = null;
 
-  if (foundStones.length > 0) {
-    if (autoFit) {
+  const baselineTuning = {
+    windScale: 1.0,
+    shapeFactor: sensorBaseShapeFactor,
+    altDeltaKm: 0,
+    latDeltaDeg: 0,
+    lonDeltaDeg: 0,
+    azimuthDeltaDeg: 0,
+    speedScale: 1.0,
+    upperFlareOffsetKm: sensorGateUpperFlareKm,
+  };
+
+  if (foundStones.length > 0 || customTuning) {
+    const baseEval =
+      foundStones.length > 0
+        ? evaluateFoundStoneResiduals({
+            stones: foundStones,
+            terminalLat: sensorBaseLat,
+            terminalLon: sensorBaseLon,
+            terminalAltM: sensorBaseAltM,
+            terminalSpeedMs: sensorBaseSpeedMs,
+            azimuthDeg: sensorBaseAzimuthDeg,
+            entryAngleDeg,
+            sounding,
+            tuning: baselineTuning,
+          })
+        : { rmsErrorM: null, comparisons: [] };
+
+    if (customTuning) {
+      const mergedTuning = {
+        ...baselineTuning,
+        ...customTuning,
+      };
+      const customEval =
+        foundStones.length > 0
+          ? evaluateFoundStoneResiduals({
+              stones: foundStones,
+              terminalLat: sensorBaseLat,
+              terminalLon: sensorBaseLon,
+              terminalAltM: sensorBaseAltM,
+              terminalSpeedMs: sensorBaseSpeedMs,
+              azimuthDeg: sensorBaseAzimuthDeg,
+              entryAngleDeg,
+              sounding,
+              tuning: mergedTuning,
+              recordTrack: true,
+              dtSec: 0.25,
+            })
+          : { rmsErrorM: null, comparisons: [] };
+      const dLatM = (Number(mergedTuning.latDeltaDeg) || 0) * METERS_PER_DEG_LAT;
+      const dLonM =
+        (Number(mergedTuning.lonDeltaDeg) || 0) *
+        METERS_PER_DEG_LAT *
+        Math.max(0.05, Math.cos(sensorBaseLat * DEG_TO_RAD));
+      stoneFit = {
+        mode: 'manual',
+        baselineRmsM: baseEval.rmsErrorM,
+        bestRmsM: customEval.rmsErrorM,
+        terminusShiftM: Math.round(Math.hypot(dLatM, dLonM)),
+        tuning: mergedTuning,
+        comparisons: customEval.comparisons,
+      };
+    } else if (autoFit && foundStones.length > 0) {
       stoneFit = autoFitDarkFlightToFoundStones({
         stones: foundStones,
-        terminalLat: effectiveLat,
-        terminalLon: effectiveLon,
-        terminalAltM: effectiveAltM,
-        terminalSpeedMs: effectiveSpeedMs,
-        azimuthDeg: effectiveAzimuthDeg,
+        terminalLat: sensorBaseLat,
+        terminalLon: sensorBaseLon,
+        terminalAltM: sensorBaseAltM,
+        terminalSpeedMs: sensorBaseSpeedMs,
+        azimuthDeg: sensorBaseAzimuthDeg,
         entryAngleDeg,
         sounding,
       });
-      if (stoneFit?.tuning) {
-        activeSounding = scaleSoundingWind(sounding, stoneFit.tuning.windScale);
-        effectiveLat += Number(stoneFit.tuning.latDeltaDeg) || 0;
-        effectiveLon += Number(stoneFit.tuning.lonDeltaDeg) || 0;
-        effectiveAltM = Math.max(
-          5000,
-          effectiveAltM + (Number(stoneFit.tuning.altDeltaKm) || 0) * 1000,
-        );
-        effectiveSpeedMs =
-          effectiveSpeedMs * (stoneFit.tuning.speedScale || 1.0);
-        effectiveAzimuthDeg =
-          (effectiveAzimuthDeg + stoneFit.tuning.azimuthDeltaDeg + 360) % 360;
-        effectiveShapeFactor = stoneFit.tuning.shapeFactor;
+      if (stoneFit) {
+        stoneFit.mode = 'autofit';
+        stoneFit.baselineRmsM = baseEval.rmsErrorM;
       }
     } else {
-      const baseEval = evaluateFoundStoneResiduals({
-        stones: foundStones,
-        terminalLat: effectiveLat,
-        terminalLon: effectiveLon,
-        terminalAltM: effectiveAltM,
-        terminalSpeedMs: effectiveSpeedMs,
-        azimuthDeg: effectiveAzimuthDeg,
-        entryAngleDeg,
-        sounding,
-        tuning: {
-          windScale: 1.0,
-          shapeFactor: effectiveShapeFactor,
-          altDeltaKm: 0,
-          latDeltaDeg: 0,
-          lonDeltaDeg: 0,
-          azimuthDeltaDeg: 0,
-          speedScale: 1.0,
-          upperFlareOffsetKm: sensorGateUpperFlareKm,
-        },
-      });
       stoneFit = {
+        mode: 'baseline',
         baselineRmsM: baseEval.rmsErrorM,
         bestRmsM: baseEval.rmsErrorM,
         terminusShiftM: 0,
-        tuning:
-          sensorGateUpperFlareKm > 0
-            ? {
-                windScale: 1.0,
-                shapeFactor: effectiveShapeFactor,
-                altDeltaKm: 0,
-                latDeltaDeg: 0,
-                lonDeltaDeg: 0,
-                azimuthDeltaDeg: 0,
-                speedScale: 1.0,
-                upperFlareOffsetKm: sensorGateUpperFlareKm,
-              }
-            : null,
+        tuning: baselineTuning,
         comparisons: baseEval.comparisons,
       };
     }
+
+    if (stoneFit?.tuning) {
+      activeSounding = scaleSoundingWind(sounding, stoneFit.tuning.windScale);
+      effectiveLat = sensorBaseLat + (Number(stoneFit.tuning.latDeltaDeg) || 0);
+      effectiveLon = sensorBaseLon + (Number(stoneFit.tuning.lonDeltaDeg) || 0);
+      effectiveAltM = Math.max(
+        5000,
+        sensorBaseAltM + (Number(stoneFit.tuning.altDeltaKm) || 0) * 1000,
+      );
+      effectiveSpeedMs =
+        sensorBaseSpeedMs * (stoneFit.tuning.speedScale || 1.0);
+      effectiveAzimuthDeg =
+        (sensorBaseAzimuthDeg + (Number(stoneFit.tuning.azimuthDeltaDeg) || 0) + 360) %
+        360;
+      effectiveShapeFactor =
+        Number(stoneFit.tuning.shapeFactor) || sensorBaseShapeFactor;
+    }
+
+    const activeT = stoneFit?.tuning || baselineTuning;
+    const peakJetMs = Number(sounding?.maxWind?.speedMs) || 20;
+    const dLatMeters = Math.round(
+      (Number(activeT.latDeltaDeg) || 0) * METERS_PER_DEG_LAT,
+    );
+    const dLonMeters = Math.round(
+      (Number(activeT.lonDeltaDeg) || 0) *
+        METERS_PER_DEG_LAT *
+        Math.max(0.05, Math.cos(sensorBaseLat * DEG_TO_RAD)),
+    );
+    stoneFit.baselineTuning = baselineTuning;
+    stoneFit.parameterReport = [
+      {
+        key: 'windScale',
+        label: 'Wind Speed Scale (Jet Profile)',
+        beforeValue: 1.0,
+        afterValue: Number(activeT.windScale ?? 1.0),
+        beforeFormatted: `1.00× (${peakJetMs.toFixed(1)} m/s jet)`,
+        afterFormatted: `${Number(activeT.windScale ?? 1.0).toFixed(2)}× (${(peakJetMs * Number(activeT.windScale ?? 1.0)).toFixed(1)} m/s jet)`,
+        deltaFormatted: `${Math.round((Number(activeT.windScale ?? 1.0) - 1) * 100) >= 0 ? '+' : ''}${Math.round((Number(activeT.windScale ?? 1.0) - 1) * 100)}%`,
+        min: 0.4,
+        max: 1.8,
+        step: 0.05,
+      },
+      {
+        key: 'shapeFactor',
+        label: 'Drag Shape Factor (Γ / Cd)',
+        beforeValue: sensorBaseShapeFactor,
+        afterValue: Number(activeT.shapeFactor ?? sensorBaseShapeFactor),
+        beforeFormatted: `${sensorBaseShapeFactor.toFixed(2)} (Subangular)`,
+        afterFormatted: `${Number(activeT.shapeFactor ?? sensorBaseShapeFactor).toFixed(2)} (${Number(activeT.shapeFactor) >= 1.3 ? 'Irregular/Tabular' : Number(activeT.shapeFactor) <= 1.05 ? 'Oriented/Smooth' : 'Subangular'})`,
+        deltaFormatted: `${Number(activeT.shapeFactor ?? sensorBaseShapeFactor) - sensorBaseShapeFactor >= 0 ? '+' : ''}${(Number(activeT.shapeFactor ?? sensorBaseShapeFactor) - sensorBaseShapeFactor).toFixed(2)}`,
+        min: 0.8,
+        max: 2.0,
+        step: 0.05,
+      },
+      {
+        key: 'speedScale',
+        label: 'Release Speed Scale (at Breakup)',
+        beforeValue: 1.0,
+        afterValue: Number(activeT.speedScale ?? 1.0),
+        beforeFormatted: `1.00× (${Math.round(sensorBaseSpeedMs)} m/s)`,
+        afterFormatted: `${Number(activeT.speedScale ?? 1.0).toFixed(2)}× (${Math.round(sensorBaseSpeedMs * Number(activeT.speedScale ?? 1.0))} m/s)`,
+        deltaFormatted: `${Math.round((Number(activeT.speedScale ?? 1.0) - 1) * 100) >= 0 ? '+' : ''}${Math.round((Number(activeT.speedScale ?? 1.0) - 1) * 100)}%`,
+        min: 0.5,
+        max: 2.2,
+        step: 0.05,
+      },
+      {
+        key: 'azimuthDeltaDeg',
+        label: 'Trajectory Heading Adjustment (ΔAz)',
+        beforeValue: 0,
+        afterValue: Number(activeT.azimuthDeltaDeg ?? 0),
+        beforeFormatted: `${sensorBaseAzimuthDeg.toFixed(1)}° (+0.0°)`,
+        afterFormatted: `${effectiveAzimuthDeg.toFixed(1)}° (${Number(activeT.azimuthDeltaDeg ?? 0) >= 0 ? '+' : ''}${Number(activeT.azimuthDeltaDeg ?? 0).toFixed(1)}°)`,
+        deltaFormatted: `${Number(activeT.azimuthDeltaDeg ?? 0) >= 0 ? '+' : ''}${Number(activeT.azimuthDeltaDeg ?? 0).toFixed(1)}°`,
+        min: -25,
+        max: 25,
+        step: 0.5,
+      },
+      {
+        key: 'latDeltaDeg',
+        label: 'Terminus Latitude Shift (ΔLat)',
+        beforeValue: 0,
+        afterValue: Number(activeT.latDeltaDeg ?? 0),
+        beforeFormatted: `${sensorBaseLat.toFixed(4)}°N`,
+        afterFormatted: `${effectiveLat.toFixed(4)}°N`,
+        deltaFormatted: `${dLatMeters >= 0 ? '+' : ''}${dLatMeters} m N`,
+        min: -0.03,
+        max: 0.03,
+        step: 0.001,
+      },
+      {
+        key: 'lonDeltaDeg',
+        label: 'Terminus Longitude Shift (ΔLon)',
+        beforeValue: 0,
+        afterValue: Number(activeT.lonDeltaDeg ?? 0),
+        beforeFormatted: `${sensorBaseLon.toFixed(4)}°E`,
+        afterFormatted: `${effectiveLon.toFixed(4)}°E`,
+        deltaFormatted: `${dLonMeters >= 0 ? '+' : ''}${dLonMeters} m E`,
+        min: -0.04,
+        max: 0.04,
+        step: 0.001,
+      },
+      {
+        key: 'altDeltaKm',
+        label: 'Terminus Altitude Shift (ΔAlt km)',
+        beforeValue: 0,
+        afterValue: Number(activeT.altDeltaKm ?? 0),
+        beforeFormatted: `${(sensorBaseAltM / 1000).toFixed(1)} km`,
+        afterFormatted: `${(effectiveAltM / 1000).toFixed(1)} km`,
+        deltaFormatted: `${Number(activeT.altDeltaKm ?? 0) >= 0 ? '+' : ''}${Number(activeT.altDeltaKm ?? 0).toFixed(1)} km`,
+        min: -10,
+        max: 10,
+        step: 0.5,
+      },
+      {
+        key: 'upperFlareOffsetKm',
+        label: 'Sub-Bolide F1 Upper Flare Offset (km)',
+        beforeValue: sensorGateUpperFlareKm,
+        afterValue: Number(activeT.upperFlareOffsetKm ?? 0),
+        beforeFormatted: `${sensorGateUpperFlareKm.toFixed(1)} km up-track`,
+        afterFormatted: `${Number(activeT.upperFlareOffsetKm ?? 0).toFixed(1)} km up-track`,
+        deltaFormatted: `${Number(activeT.upperFlareOffsetKm ?? 0) - sensorGateUpperFlareKm >= 0 ? '+' : ''}${(Number(activeT.upperFlareOffsetKm ?? 0) - sensorGateUpperFlareKm).toFixed(1)} km`,
+        min: 0,
+        max: 6.0,
+        step: 0.2,
+      },
+    ];
   }
 
   // REGIME B: Full 3-Model Strewn Field (Deterministic Spine + Monte Carlo + Cross-Calibration)

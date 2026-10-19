@@ -293,6 +293,17 @@
   color: var(--text-secondary);
 }
 
+/* A row whose auto-fit value differs from the un-tuned baseline. */
+.meteor-param-changed .meteor-param-delta {
+  color: #ffd9a8;
+  font-weight: 500;
+}
+
+.meteor-param-delta {
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
 /* Auto-fit summary */
 
 .meteor-autofit-summary {
@@ -311,6 +322,24 @@
 
 .meteor-autofit-rms {
   color: #ffd9a8;
+}
+
+.meteor-autofit-hint {
+  color: var(--text-dim);
+  font-style: italic;
+  opacity: 0.8;
+}
+
+/* The formatted reading that sits beside an editable fitted value. */
+.meteor-param-reading {
+  margin-left: 5px;
+  color: var(--text-dim);
+  font-size: 7.5px;
+  opacity: 0.85;
+}
+
+.meteor-tune-table .meteor-tuning-edit {
+  width: 58px;
 }
 
 /* Editable inputs */
