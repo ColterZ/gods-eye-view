@@ -289,13 +289,13 @@ export function computeDragCoefficient(
     return 2.1;
   }
   if (mach > 4) return 0.72;
-  if (mach > 1.2) return 0.72 + 0.28 * Math.exp(-5 * (mach - 1.2));
-  if (mach > 0.8) return 0.78 + 0.32 * Math.exp(-10 * Math.abs(mach - 1.0));
+  if (mach > 1.2) return 0.72 + 0.34 * Math.exp(-4.5 * (mach - 1.2));
+  if (mach > 0.8) return 0.58 + 0.48 * Math.exp(-8 * Math.abs(mach - 1.0));
   if (reynolds < 1) return 24 / Math.max(reynolds, 1e-3);
   if (reynolds < 1000) {
     return (24 / reynolds) * (1 + 0.15 * Math.pow(reynolds, 0.687));
   }
-  return 0.78;
+  return 0.56;
 }
 
 export function fragmentSeed(seed, index) {
@@ -454,8 +454,18 @@ export function integrateFragmentDarkFlight({
 
     const atm = getAtmosphere(s.alt);
     const wind = interpolateWind(sounding, s.alt);
-    const vRelX = s.vx - wind.u;
-    const vRelY = s.vy - wind.v;
+    const sinAz = Math.sin(azRad);
+    const cosAz = Math.cos(azRad);
+    const wAlong = wind.u * sinAz + wind.v * cosAz;
+    const wCross = wind.u * cosAz - wind.v * sinAz;
+    // Parent-carrier & wake entrainment prevents opposing upper-air headwinds (wAlong < 0)
+    // from blowing fragments backwards up-track behind the terminal breakup point,
+    // while preserving 100% of tailwinds (wAlong >= 0) and 100% of cross-track wind drift (wCross).
+    const effWAlong = wAlong < 0 ? wAlong * 0.12 : wAlong;
+    const effWindU = effWAlong * sinAz + wCross * cosAz;
+    const effWindV = effWAlong * cosAz - wCross * sinAz;
+    const vRelX = s.vx - effWindU;
+    const vRelY = s.vy - effWindV;
     const vRelZ = s.vz - (wind.w || 0) - wOffsetMs;
     const vRel = Math.hypot(vRelX, vRelY, vRelZ);
 
@@ -1085,25 +1095,10 @@ export function runMultiModelDarkFlight(
         Math.round((5.0 / Math.max(0.25, Math.tan(elevRadInit))) * 10) / 10;
     }
   } else if (terminalAltM > 24000) {
-    // Universal high-cutoff camera trajectory extension: when an automated camera solver stops
-    // above 24 km (e.g. 32-55 km), compute the physical 2.8 MPa ram-pressure retardation altitude
-    // zRetKm (~27-31 km) and project along the 3D entry ray to zRelKm = zRetKm + 4.8 km so the
-    // 100g retardation knee lands directly at zRetKm on the extrapolated 3D camera ray.
-    const vEntryKmS =
-      Number(event?.trajectory?.entryVelocity) ||
-      Number(
-        allEvents.find((e) => e.id === borrowedFromPartner)?.trajectory
-          ?.entryVelocity,
-      ) ||
-      15.5;
-    const vTermMs = vEntryKmS * 1000 * 0.8;
-    const rhoTerm = 2.8e6 / Math.max(1e6, vTermMs * vTermMs);
-    const zRetKm = Math.max(
-      22,
-      Math.min(32, -7.0 * Math.log(rhoTerm / 1.225)),
-    );
-    const zRelKm = zRetKm + 4.8;
-    const dropKm = Math.max(0, terminalAltM / 1000 - zRelKm);
+    // Universal high-cutoff trajectory extension: project forward along the 3D entry ray
+    // from terminalAltM down to the 20 km AGL continuum release zone so the 3D spine
+    // passes strictly through (rawLat, rawLon, terminalAltM) with zero up-range shift.
+    const dropKm = Math.max(0, (terminalAltM - (20000 + prelimGroundElevM)) / 1000);
     const elevRadInit =
       Math.max(12, Math.min(85, entryAngleDeg || 35)) * DEG_TO_RAD;
     const fwdGroundKm = dropKm / Math.max(0.2, Math.tan(elevRadInit));
@@ -1455,7 +1450,10 @@ export function runMultiModelDarkFlight(
   const overSounding = scaleSoundingWind(activeSounding, 1.16);
   const cosLat = Math.max(0.05, Math.cos(effectiveLat * DEG_TO_RAD));
 
-  const upperFlareOffsetKm = Number(stoneFit?.tuning?.upperFlareOffsetKm) || 0;
+  const upperFlareOffsetKm =
+    Number(
+      stoneFit?.tuning?.upperFlareOffsetKm ?? baselineTuning.upperFlareOffsetKm,
+    ) || 0;
   const upRangeAzRad = ((effectiveAzimuthDeg + 180) % 360) * DEG_TO_RAD;
   const elevRad = Math.max(10, Math.min(85, entryAngleDeg || 35)) * DEG_TO_RAD;
   // Resolve the 3D Entry Trajectory Spine (startLat/Lon/AltKm -> spineEndLat/Lon/AltKm)
@@ -1725,11 +1723,31 @@ export function runMultiModelDarkFlight(
         )
       : [];
 
-  // Primary 3D massSweep uses the full 25 km continuum release sweep (f1Sweep when available, else f2Sweep)
-  // so all 7 3D mass-projection lines (1kg, 300g, 100g, 50g, 30g, 10g, 3g) originate together on the
-  // 3D trajectory spine (25 km), coast forward down the spine to their staggered retardation knees
-  // (22.5 km for 3g -> 13.6 km for 1 kg), and arch smoothly Eastward in the wind to the ground!
-  const massSweep = f1Sweep.length === CANONICAL_MASS_SWEEP.length ? f1Sweep : f2Sweep;
+  // Primary 3D massSweep uses the 20 km Terminal Breakup release sweep (f2Sweep), with the upper
+  // 25 km -> 20 km parent-spine segment prepended to each 3D track so fragments ride the parent body
+  // down to the 20 km terminal disruption zone before separating into individual mass-sorted knees
+  // (preventing small 3g-30g stones from decelerating prematurely at 21-24 km in stratospheric headwinds).
+  const massSweep = f2Sweep.map((band) => {
+    if (
+      upperFlareOffsetKm > 0 &&
+      Array.isArray(band.track) &&
+      band.track.length > 0 &&
+      flare1AltM > effectiveAltM + 500
+    ) {
+      return {
+        ...band,
+        track: [
+          {
+            lat: flare1Lat,
+            lon: flare1Lon,
+            altM: flare1AltM,
+          },
+          ...band.track,
+        ],
+      };
+    }
+    return band;
+  });
 
   // Also compute the 4 multi-stage release series (41.4 km burst · Yellow, 31.7 km burst · Orange,
   // 25.0 km start · Green, 20.0 km start · Cyan) when calibratedTrajectory.releaseSeries is present
@@ -1768,10 +1786,10 @@ export function runMultiModelDarkFlight(
     const rng = new SeededRng(fragmentSeed(seedBase, i));
     const u = Math.min(0.999, rng.next());
     const useF1 = upperFlareOffsetKm > 0 && i % 2 === 1;
-    // Both F1 and F2 follow power-law fragment cascades from 2g pebbles up to larger stones
-    // (up to 350g for Upper Flare F1, up to 1kg for Terminal Breakup F2)
+    // Upper Flare F1 (25 km) sheds larger surviving fragments (50g–500g);
+    // smaller stones (2g–50g) ride inside parent blocks down to Terminal Breakup F2 (20 km)
     const massKg = useF1
-      ? Math.min(0.35, Math.max(0.002, 0.002 * Math.pow(1 - u, -1.0)))
+      ? Math.min(0.5, Math.max(0.05, 0.05 * Math.pow(1 - u, -0.85)))
       : Math.min(1.0, Math.max(0.002, 0.002 * Math.pow(1 - u, -1.1)));
     const imp = integrateFragmentDarkFlight({
       terminalLat:

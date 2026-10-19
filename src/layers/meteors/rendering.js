@@ -518,11 +518,11 @@ export function createRendering({ layerState, services, components, config }) {
             );
           }
 
-          // Render ground-only secondary mass-sweep pins for each Sub-Bolide's
-          // complementary masses only when releaseSeriesSweeps is not already rendering them
+          // Render ground-only secondary mass-sweep pins only when primary massSweep is empty
           if (
             (mode === 'all' || mode === 'sweep') &&
             Array.isArray(sb.massSweep) &&
+            !(Array.isArray(df.massSweep) && df.massSweep.length > 0) &&
             !(Array.isArray(df.releaseSeriesSweeps) && df.releaseSeriesSweeps.length > 0)
           ) {
             for (const sbBand of sb.massSweep) {
