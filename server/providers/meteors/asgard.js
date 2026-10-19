@@ -1,3 +1,4 @@
+import { inflateSync } from 'node:zlib';
 import { readResponseTextCapped } from '../common/http.js';
 import { haversineKm } from './gmn.js';
 
@@ -871,6 +872,311 @@ export function enrichAsgardEventFromDetailHtml(
 }
 
 /**
+ * Decode a PNG image buffer in pure Node (`IHDR` + `IDAT` via `zlib.inflateSync`)
+ * and perform automated pixel-streak photogrammetry & along-track light-curve flare
+ * extraction on an all-sky camera composite frame.
+ */
+export function analyzePngCompositeStreak(
+  pngBuffer,
+  { startAltKm = 85, endAltKm = 48 } = {},
+) {
+  if (!pngBuffer || pngBuffer.byteLength < 64) return null;
+  const buf = Buffer.isBuffer(pngBuffer) ? pngBuffer : Buffer.from(pngBuffer);
+  if (buf.readUInt32BE(0) !== 0x89504e47) return null;
+
+  let pos = 8;
+  let width = 0;
+  let height = 0;
+  let colorType = 0;
+  const idatChunks = [];
+
+  while (pos + 12 <= buf.length) {
+    const len = buf.readUInt32BE(pos);
+    const type = buf.toString('ascii', pos + 4, pos + 8);
+    if (type === 'IHDR') {
+      width = buf.readUInt32BE(pos + 8);
+      height = buf.readUInt32BE(pos + 12);
+      colorType = buf.readUInt8(pos + 17);
+    } else if (type === 'IDAT') {
+      idatChunks.push(buf.subarray(pos + 8, pos + 8 + len));
+    } else if (type === 'IEND') {
+      break;
+    }
+    pos += 12 + len;
+  }
+
+  if (width <= 0 || height <= 0 || idatChunks.length === 0) return null;
+  const bpp =
+    colorType === 6 ? 4 : colorType === 2 ? 3 : colorType === 4 ? 2 : 1;
+  const raw = inflateSync(Buffer.concat(idatChunks));
+  const stride = width * bpp + 1;
+  if (raw.length < height * stride) return null;
+
+  const lum = new Float32Array(width * height);
+  const prevRow = new Uint8Array(width * bpp);
+  const curRow = new Uint8Array(width * bpp);
+  const paeth = (a, b, c) => {
+    const p = a + b - c;
+    const pa = Math.abs(p - a);
+    const pb = Math.abs(p - b);
+    const pc = Math.abs(p - c);
+    return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+  };
+
+  for (let y = 0; y < height; y++) {
+    const f = raw[y * stride];
+    const rowStart = y * stride + 1;
+    for (let i = 0; i < width * bpp; i++) {
+      const x = raw[rowStart + i];
+      const a = i >= bpp ? curRow[i - bpp] : 0;
+      const b = prevRow[i];
+      const c = i >= bpp ? prevRow[i - bpp] : 0;
+      curRow[i] =
+        (x +
+          (f === 1
+            ? a
+            : f === 2
+              ? b
+              : f === 3
+                ? (a + b) >> 1
+                : f === 4
+                  ? paeth(a, b, c)
+                  : 0)) &
+        0xff;
+    }
+    prevRow.set(curRow);
+    for (let x = 0; x < width; x++) {
+      const r = curRow[x * bpp];
+      const g = bpp >= 3 ? curRow[x * bpp + 1] : r;
+      const b = bpp >= 3 ? curRow[x * bpp + 2] : r;
+      lum[y * width + x] = 0.299 * r + 0.587 * g + 0.114 * b;
+    }
+  }
+
+  // Restrict to inner circular all-sky dome (excluding outer timestamp overlay margins)
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const rDome = Math.min(width, height) * 0.44;
+  let sumY = 0;
+  let sumY2 = 0;
+  let countDome = 0;
+
+  for (let y = 20; y < height - 20; y++) {
+    for (let x = 20; x < width - 20; x++) {
+      if (Math.hypot(x - cx, y - cy) > rDome) continue;
+      const v = lum[y * width + x];
+      sumY += v;
+      sumY2 += v * v;
+      countDome++;
+    }
+  }
+  if (countDome < 100) return null;
+  const meanY = sumY / countDome;
+  const stdY = Math.sqrt(Math.max(1, sumY2 / countDome - meanY * meanY));
+  const threshold = Math.min(242, Math.max(150, meanY + 3.4 * stdY));
+
+  const brightPts = [];
+  for (let y = 20; y < height - 20; y++) {
+    for (let x = 20; x < width - 20; x++) {
+      if (Math.hypot(x - cx, y - cy) > rDome) continue;
+      const v = lum[y * width + x];
+      if (v >= threshold) {
+        brightPts.push({ x, y, w: v - meanY, v });
+      }
+    }
+  }
+
+  if (brightPts.length < 5) return null;
+
+  // Weighted centroid & principal axis (2D PCA) of the bolide streak
+  let wSum = 0;
+  let mx = 0;
+  let my = 0;
+  for (const p of brightPts) {
+    wSum += p.w;
+    mx += p.x * p.w;
+    my += p.y * p.w;
+  }
+  mx /= wSum;
+  my /= wSum;
+
+  let sxx = 0;
+  let syy = 0;
+  let sxy = 0;
+  for (const p of brightPts) {
+    const dx = p.x - mx;
+    const dy = p.y - my;
+    sxx += p.w * dx * dx;
+    syy += p.w * dy * dy;
+    sxy += p.w * dx * dy;
+  }
+  const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  const ux = Math.cos(theta);
+  const uy = Math.sin(theta);
+
+  // Project points onto streak axis to find endpoints (tMin, tMax) and 10-bin light curve
+  let tMin = Infinity;
+  let tMax = -Infinity;
+  for (const p of brightPts) {
+    const tProj = (p.x - mx) * ux + (p.y - my) * uy;
+    p.tProj = tProj;
+    if (tProj < tMin) tMin = tProj;
+    if (tProj > tMax) tMax = tProj;
+  }
+
+  const streakLengthPx = Math.round(Math.max(1, tMax - tMin) * 10) / 10;
+  if (streakLengthPx < 8) return null;
+  const x1 = Math.round(mx + tMin * ux);
+  const y1 = Math.round(my + tMin * uy);
+  const x2 = Math.round(mx + tMax * ux);
+  const y2 = Math.round(my + tMax * uy);
+
+  // All-sky fisheye azimuth (0°=N top, 90°=E right) & elevation (90° at center, 0° at rDome)
+  const pixelToSky = (px, py) => {
+    const dx = px - cx;
+    const dy = cy - py; // up is North
+    const rNorm = Math.min(1, Math.hypot(dx, dy) / rDome);
+    const azDeg = Math.round((((Math.atan2(dx, dy) * 180) / Math.PI) + 360) % 360);
+    const elDeg = Math.round((1 - rNorm) * 90 * 10) / 10;
+    return { azDeg, elDeg };
+  };
+  const skyStart = pixelToSky(x1, y1);
+  const skyEnd = pixelToSky(x2, y2);
+
+  // Sample 16 bins along the streak to find 0..5 distinct flare peaks along the light curve
+  const nBins = 16;
+  const binEnergy = new Float32Array(nBins);
+  for (const p of brightPts) {
+    const frac = Math.min(
+      0.999,
+      Math.max(0, (p.tProj - tMin) / Math.max(1, tMax - tMin)),
+    );
+    const bIdx = Math.floor(frac * nBins);
+    binEnergy[bIdx] += p.w;
+  }
+  const meanBin =
+    binEnergy.reduce((acc, v) => acc + v, 0) / Math.max(1, nBins);
+  let peakBin = 0;
+  const localPeaks = [];
+  for (let i = 0; i < nBins; i++) {
+    if (binEnergy[i] > binEnergy[peakBin]) peakBin = i;
+    const prev = i > 0 ? binEnergy[i - 1] : 0;
+    const next = i < nBins - 1 ? binEnergy[i + 1] : 0;
+    if (binEnergy[i] >= meanBin * 1.45 && binEnergy[i] >= prev && binEnergy[i] > next) {
+      const f = Math.round(((i + 0.5) / nBins) * 100) / 100;
+      localPeaks.push({
+        fraction: f,
+        impliedAltKm:
+          Math.round((startAltKm - f * (startAltKm - endAltKm)) * 10) / 10,
+        relativeIntensity: Math.round((binEnergy[i] / Math.max(1, meanBin)) * 100) / 100,
+      });
+    }
+  }
+  const peakFlareFrac = Math.round(((peakBin + 0.5) / nBins) * 100) / 100;
+  const impliedFlareAltKm =
+    Math.round((startAltKm - peakFlareFrac * (startAltKm - endAltKm)) * 10) / 10;
+
+  return {
+    width,
+    height,
+    brightPixelCount: brightPts.length,
+    backgroundMeanLum: Math.round(meanY * 10) / 10,
+    streakStartPx: [x1, y1],
+    streakEndPx: [x2, y2],
+    streakLengthPx,
+    skyAzimuthSpanDeg: [skyStart.azDeg, skyEnd.azDeg],
+    skyElevationSpanDeg: [skyStart.elDeg, skyEnd.elDeg],
+    peakFlareFraction: peakFlareFrac,
+    impliedFlareAltKm,
+    detectedFlareCount: localPeaks.length,
+    detectedFlares: localPeaks.slice(0, 5),
+  };
+}
+
+/**
+ * Parse MP4 ISO Base Media `mvhd` atom via HTTP Range request to extract
+ * exact video clip duration and timescale without downloading the full video.
+ */
+export async function analyzeMp4HeaderDuration(videoUrl, fetchImpl = fetch, signal) {
+  for (const rangeHeader of ['bytes=-131072', 'bytes=0-65535']) {
+    try {
+      const r = await fetchImpl(videoUrl, {
+        signal,
+        headers: { Range: rangeHeader, 'User-Agent': 'Gods Eye View' },
+      });
+      if (!r.ok && r.status !== 206) continue;
+      const buf = Buffer.from(await r.arrayBuffer());
+      const mvhdIdx = buf.indexOf('mvhd');
+      if (mvhdIdx !== -1 && mvhdIdx + 24 <= buf.length) {
+        const version = buf.readUInt8(mvhdIdx + 4);
+        const timescale =
+          version === 1
+            ? buf.readUInt32BE(mvhdIdx + 24)
+            : buf.readUInt32BE(mvhdIdx + 16);
+        const duration =
+          version === 1
+            ? Number(buf.readBigUInt64BE(mvhdIdx + 28))
+            : buf.readUInt32BE(mvhdIdx + 20);
+        if (timescale > 0 && duration > 0) {
+          return {
+            timescale,
+            clipDurationSec: Math.round((duration / timescale) * 100) / 100,
+          };
+        }
+      }
+    } catch {
+      // ignore range errors
+    }
+  }
+  return null;
+}
+
+/**
+ * Run automated pixel-level photogrammetry & MP4 header analysis on an event's
+ * `verifiedMedia` array (up to 4 camera items).
+ */
+export async function analyzeEventMediaAssets(event, fetchImpl = fetch, signal) {
+  if (!event || !Array.isArray(event.verifiedMedia) || event.verifiedMedia.length === 0) {
+    return event;
+  }
+  const startAltKm = Number(event.trajectory?.startAltKm) || 85;
+  const endAltKm = Number(event.trajectory?.endAltKm) || 48;
+
+  await Promise.allSettled(
+    event.verifiedMedia.slice(0, 4).map(async (item) => {
+      if (item.frameAnalysis) return;
+      const imgUrl = item.thumbnailUrl || item.imageUrl;
+      const tasks = [];
+      if (imgUrl && imgUrl.endsWith('.png')) {
+        tasks.push(
+          fetchImpl(imgUrl, { signal, headers: { 'User-Agent': 'Gods Eye View' } })
+            .then((r) => (r.ok ? r.arrayBuffer() : null))
+            .then((ab) => {
+              if (ab) {
+                item.frameAnalysis = analyzePngCompositeStreak(ab, {
+                  startAltKm,
+                  endAltKm,
+                });
+              }
+            }),
+        );
+      }
+      if (item.videoUrl && item.videoUrl.endsWith('.mp4')) {
+        tasks.push(
+          analyzeMp4HeaderDuration(item.videoUrl, fetchImpl, signal).then(
+            (vMeta) => {
+              if (vMeta) item.videoMeta = vMeta;
+            },
+          ),
+        );
+      }
+      await Promise.allSettled(tasks);
+    }),
+  );
+  return event;
+}
+
+/**
  * NASA ASGARD Skyfalls + NASA ARES Meteorite Falls proxy middleware (/api/nasa-skyfalls).
  */
 export function asgardProxy({
@@ -943,6 +1249,7 @@ export function asgardProxy({
                 : null;
             if (detailTxt) {
               enrichAsgardEventFromDetailHtml(ev, detailTxt, subMapTxt);
+              await analyzeEventMediaAssets(ev, fetchImpl, signal);
             }
           }),
         );
@@ -1068,6 +1375,7 @@ export function asgardProxy({
                 : null;
             if (dTxt) {
               enrichAsgardEventFromDetailHtml(target, dTxt, mTxt);
+              await analyzeEventMediaAssets(target, fetchImpl, controller.signal);
             }
           }
         }

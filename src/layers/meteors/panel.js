@@ -447,6 +447,21 @@ export function createMeteorPanel({
         lines.push(`🎥 ${na.multiSolverAndMediaAudit.summary}`);
       }
     }
+    if (val.seismic && !val.seismic.unavailable && Array.isArray(val.seismic.stations)) {
+      const seis = val.seismic;
+      const detList = seis.stations
+        .filter((s) => s.waveformDetection && s.waveformDetection.snr >= 4)
+        .map(
+          (s) =>
+            `${s.code} (${s.siteName.split(',')[0]}, ${s.minTrackSlantKm} km slant): N-wave @ +${s.waveformDetection.observedArrivalSec}s (pred +${s.predictedArrivalSec}s, Δ=${s.waveformDetection.residualSec}s, SNR ${s.waveformDetection.snr}×)`,
+        );
+      const mlNote = seis.multilateration
+        ? ` · 3D Seismic Source Inversion: ${seis.multilateration.seismicLat}°N, ${seis.multilateration.seismicLon}°E @ ${seis.multilateration.seismicBurstAltKm} km (RMS ${seis.multilateration.rmsResidualSec}s, offset ${seis.multilateration.offsetFromOpticalKm} km)`
+        : '';
+      lines.push(
+        `🌋 Seismic & Infrasound Corroboration (${seis.waveformDetectedCount}/${seis.totalStationsInRadius} IRIS/EarthScope stations detected N-wave · M_L,eq=${seis.equivalentSeismicMagMl}): ${detList.join(' | ') || 'Station geometry mapped'}${mlNote}`,
+      );
+    }
     if (Array.isArray(val.sanityWarnings) && val.sanityWarnings.length > 0) {
       lines.push(`🔍 Sanity Checks: ${val.sanityWarnings.join(' | ')}`);
     }
@@ -502,6 +517,21 @@ export function createMeteorPanel({
         }
         const lbl = el('div', null, card);
         lbl.textContent = `${item.type === 'video' ? '🎬 ' : '🖼 '}${item.label || 'Camera Media'}`;
+        if (item.frameAnalysis || item.videoMeta) {
+          const metaDiv = el('div', null, card);
+          metaDiv.style.cssText = 'color:#94a3b8;font-size:8.5px;margin-top:2px;line-height:1.25;';
+          const parts = [];
+          if (item.videoMeta?.clipDurationSec) {
+            parts.push(`MP4 ${item.videoMeta.clipDurationSec}s`);
+          }
+          if (item.frameAnalysis) {
+            const fa = item.frameAnalysis;
+            parts.push(
+              `Streak ${fa.streakLengthPx}px · Az ${fa.skyAzimuthSpanDeg[0]}°→${fa.skyAzimuthSpanDeg[1]}° · Flare @ ${Math.round(fa.peakFlareFraction * 100)}% (${fa.impliedFlareAltKm} km)`,
+            );
+          }
+          metaDiv.textContent = parts.join(' · ');
+        }
       }
     }
 

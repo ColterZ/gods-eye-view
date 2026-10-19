@@ -31,6 +31,7 @@ import { cneosProxy } from './meteors/cneos.js';
 import { gmnProxy } from './meteors/gmn.js';
 import { asgardProxy } from './meteors/asgard.js';
 import { meteorSoundingProxy } from './meteors/sounding.js';
+import { meteorSeismicProxy } from './meteors/seismic.js';
 
 /**
  * Construct the local provider plugins in their established order.
@@ -70,6 +71,7 @@ function localProviderPlugins({ realtime } = {}) {
     gmnProxy(),
     asgardProxy(),
     meteorSoundingProxy(),
+    meteorSeismicProxy(),
     keySetupEndpoint(),
   ];
 }

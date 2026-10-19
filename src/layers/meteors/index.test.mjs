@@ -1203,4 +1203,123 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     assert.ok(val.nasaAudit.multiSolverAndMediaAudit);
     assert.ok(val.nasaAudit.multiSolverAndMediaAudit.amsTerminusOffsetKm > 10);
   });
+
+  it('18. dynamically calculates N ∈ {0, 1, 2, 3, 4} bolide flares along the 3D entry ray, regularizes trajectory auto-fit, and corroborates seismic N-wave multilateration', async () => {
+    const { computeWeibullFractureCascade } = await import('./validation.js');
+    const { invertSeismicAirburstSource } = await import(
+      '../../../server/providers/meteors/seismic.js'
+    );
+
+    // N = 0 Bolides: high-altitude grazing / low-ram-pressure meteoroid (< 0.08 MPa)
+    const c0 = computeWeibullFractureCascade(
+      { mass: 0.2 },
+      { startAltKm: 92, endAltKm: 74, ramPressureMpa: 0.03 },
+    );
+    assert.equal(c0.bolideCount, 0);
+    assert.equal(c0.episodes.length, 0);
+
+    // N = 1 Bolide: moderate single terminal breakup
+    const c1 = computeWeibullFractureCascade(
+      { mass: 0.8 },
+      { startAltKm: 80, endAltKm: 52, ramPressureMpa: 0.22 },
+    );
+    assert.equal(c1.bolideCount, 1);
+    assert.equal(c1.episodes.length, 1);
+    assert.equal(c1.episodes[0].flareAltKm, 52);
+
+    // N = 2 Bolides: two-stage progressive breakup
+    const c2 = computeWeibullFractureCascade(
+      { mass: 45 },
+      { startAltKm: 82, endAltKm: 45.5, ramPressureMpa: 0.95 },
+    );
+    assert.equal(c2.bolideCount, 2);
+    assert.equal(c2.episodes.length, 2);
+    assert.ok(c2.episodes[0].flareAltKm > c2.episodes[1].flareAltKm + 5);
+
+    // N = 3 Bolides: three-stage breakup (high ram pressure / large energy spread)
+    const c3 = computeWeibullFractureCascade(
+      { mass: 85 },
+      { startAltKm: 84, endAltKm: 36, ramPressureMpa: 1.85 },
+    );
+    assert.equal(c3.bolideCount, 3);
+    assert.equal(c3.episodes.length, 3);
+    assert.equal(
+      c3.episodes.reduce((s, e) => s + e.massSharePct, 0),
+      100,
+    );
+
+    // N = 4 Bolides: rare large multi-pulse bolide cascade
+    const c4 = computeWeibullFractureCascade(
+      { mass: 350 },
+      { startAltKm: 88, endAltKm: 28, ramPressureMpa: 3.4 },
+    );
+    assert.equal(c4.bolideCount, 4);
+    assert.equal(c4.episodes.length, 4);
+
+    // Verify 3D Sub-Bolide sky positions sit spaced along the entry ray (not stacked at 45.5 km)
+    const aresFalls = buildAresFallEvents(1792200000000);
+    const sims = aresFalls.find((f) => f.id === 'ares:sims-corner-wa');
+    const asgardPartner = {
+      id: 'asgard:20260814-074833',
+      source: 'asgard',
+      eventTime: '2026-08-14T07:48:33.000Z',
+      location: { lat: 47.8501, lon: -119.4084, altitude: 45.5 },
+      trajectory: {
+        startLat: 47.4117,
+        startLon: -119.4122,
+        startAltKm: 77.9,
+        endLat: 47.8501,
+        endLon: -119.4084,
+        endAltKm: 45.5,
+        azimuth: 0.4,
+        entryAngle: 33.7,
+        entryVelocity: 14.6,
+      },
+      possibleMatches: [{ id: 'ares:sims-corner-wa', source: 'ARES' }],
+    };
+    sims.possibleMatches = [{ id: 'asgard:20260814-074833', source: 'ASGARD' }];
+
+    const df = runMultiModelDarkFlight(sims, sampleSounding, {
+      allEvents: [sims, asgardPartner],
+      nFragments: 32,
+      autoFit: true,
+    });
+    assert.equal(df.subBolides.length, 2);
+    assert.equal(df.subBolides[0].altKm, 61.5);
+    assert.equal(df.subBolides[1].altKm, 45.5);
+    // F1 (61.5 km) must be ~24 km up-range (south) of F2 (45.5 km) along the trajectory ray
+    assert.ok(df.subBolides[0].lat < df.subBolides[1].lat - 0.15);
+    // Regularized auto-fit keeps terminus shift within camera 1σ (<= 450m)
+    assert.ok(df.stoneFit.terminusShiftM <= 450);
+
+    // Verify 3D Seismic Airburst Source Multilateration from real UW station geometry
+    const ml = invertSeismicAirburstSource(
+      [
+        {
+          lat: 47.9852,
+          lon: -119.772,
+          elevM: 894,
+          waveformDetection: { observedArrivalSec: 174.6, snr: 69.4 },
+        },
+        {
+          lat: 47.3707,
+          lon: -119.6117,
+          elevM: 690,
+          waveformDetection: { observedArrivalSec: 162.1, snr: 579.3 },
+        },
+        {
+          lat: 47.8047,
+          lon: -120.0429,
+          elevM: 1067,
+          waveformDetection: { observedArrivalSec: 200.7, snr: 45.2 },
+        },
+      ],
+      47.8501,
+      -119.4084,
+      45.5,
+    );
+    assert.ok(ml);
+    assert.equal(ml.stationCount, 3);
+    assert.ok(ml.seismicBurstAltKm >= 24 && ml.seismicBurstAltKm <= 58);
+  });
 });

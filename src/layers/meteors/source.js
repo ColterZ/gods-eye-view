@@ -67,5 +67,33 @@ export function createSource({ layerState, services, components, config, feed })
     return null;
   }
 
-  return { fetchSnapshot, fetchSounding, fetchAsgardEventEnrichment };
+  async function fetchSeismic(
+    { lat, lon, startLat, startLon, startAltKm, burstAltKm, energyTonsTnt, timeIso },
+    signal,
+  ) {
+    try {
+      const qs = new URLSearchParams({
+        lat: String(lat),
+        lon: String(lon),
+        time: String(timeIso || ''),
+        burstAltKm: String(burstAltKm ?? 45.5),
+        energyTonsTnt: String(energyTonsTnt ?? 10),
+        ...(Number.isFinite(startLat) ? { startLat: String(startLat) } : {}),
+        ...(Number.isFinite(startLon) ? { startLon: String(startLon) } : {}),
+        ...(Number.isFinite(startAltKm) ? { startAltKm: String(startAltKm) } : {}),
+      }).toString();
+      const response = await fetch(`/api/meteor-seismic?${qs}`, {
+        signal,
+        headers: { Accept: 'application/json' },
+      });
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch {
+      // Optional seismic corroboration
+    }
+    return null;
+  }
+
+  return { fetchSnapshot, fetchSounding, fetchAsgardEventEnrichment, fetchSeismic };
 }

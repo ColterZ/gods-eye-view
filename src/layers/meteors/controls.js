@@ -121,7 +121,7 @@ export function createControls({ layerState, services, components, config }) {
         (!asgardPartner.sightlineSummary || !asgardPartner.nasaRetrievedClaims) &&
         typeof components.source.fetchAsgardEventEnrichment === 'function';
 
-      const [sounding, enrichedAsgard] = await Promise.all([
+      const [sounding, enrichedAsgard, seismicData] = await Promise.all([
         components.source.fetchSounding({
           lat: ev.location.lat,
           lon: ev.location.lon,
@@ -131,6 +131,17 @@ export function createControls({ layerState, services, components, config }) {
           ? components.source.fetchAsgardEventEnrichment(
               asgardPartner.eventId || asgardPartner.id,
             )
+          : Promise.resolve(null),
+        typeof components.source.fetchSeismic === 'function'
+          ? components.source.fetchSeismic({
+              lat: asgardPartner?.location?.lat ?? ev.location.lat,
+              lon: asgardPartner?.location?.lon ?? ev.location.lon,
+              startLat: asgardPartner?.trajectory?.startLat ?? ev.trajectory?.startLat,
+              startLon: asgardPartner?.trajectory?.startLon ?? ev.trajectory?.startLon,
+              startAltKm: asgardPartner?.trajectory?.startAltKm ?? ev.trajectory?.startAltKm,
+              burstAltKm: asgardPartner?.trajectory?.endAltKm ?? ev.location?.altitude ?? 45.5,
+              timeIso: asgardPartner?.eventTime || ev.eventTime,
+            })
           : Promise.resolve(null),
       ]);
       if (enrichedAsgard && asgardPartner) {
@@ -148,6 +159,9 @@ export function createControls({ layerState, services, components, config }) {
         autoFit: layerState._darkFlightAutoFit,
         customTuning: layerState._customTuning,
       });
+      if (seismicData && layerState._darkFlightResult?.validation) {
+        layerState._darkFlightResult.validation.seismic = seismicData;
+      }
       components.rendering.renderDarkFlight();
       if (fly) flyToEvent(targetId);
     } finally {

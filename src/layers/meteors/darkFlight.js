@@ -26,6 +26,8 @@ import {
 import {
   evaluateEventSanityAndOverUnder,
   getNexradGateForEvent,
+  computeAerodynamicBreakupPhysics,
+  computeWeibullFractureCascade,
 } from './validation.js';
 
 const R_GAS = 287.058;
@@ -982,17 +984,21 @@ export function runMultiModelDarkFlight(
           }
         }
       }
+      // Constrain any radar-gate release adjustment strictly within the 1σ camera
+      // sightline waist uncertainty (±0.005° ≈ 400m) so the 3D breakup origin stays
+      // anchored to the tip of the observed optical trajectory arrow; cross-track
+      // advection to the radar gate is handled physically by the wind profile & lift.
       const dLatRadar = Math.max(
-        -0.025,
-        Math.min(0.025, gateLat - probeAtGate.lat),
+        -0.005,
+        Math.min(0.005, gateLat - probeAtGate.lat),
       );
       const dLonRadar = Math.max(
-        -0.036,
-        Math.min(0.036, gateLon - probeAtGate.lon),
+        -0.006,
+        Math.min(0.006, gateLon - probeAtGate.lon),
       );
       effectiveLat = lat + dLatRadar;
       effectiveLon = lon + dLonRadar;
-      effectiveAzimuthDeg = (azimuthDeg + 2 + 360) % 360;
+      effectiveAzimuthDeg = (azimuthDeg + 1 + 360) % 360;
       effectiveShapeFactor = 1.25;
       if (
         Array.isArray(nexradGate.flareAltitudesKm) &&
@@ -1022,6 +1028,7 @@ export function runMultiModelDarkFlight(
 
   const baselineTuning = {
     windScale: 1.0,
+    windDirDeltaDeg: 0,
     shapeFactor: sensorBaseShapeFactor,
     altDeltaKm: 0,
     latDeltaDeg: 0,
@@ -1113,7 +1120,11 @@ export function runMultiModelDarkFlight(
     }
 
     if (stoneFit?.tuning) {
-      activeSounding = scaleSoundingWind(sounding, stoneFit.tuning.windScale);
+      activeSounding = scaleSoundingWind(
+        sounding,
+        stoneFit.tuning.windScale,
+        stoneFit.tuning.windDirDeltaDeg,
+      );
       effectiveLat = sensorBaseLat + (Number(stoneFit.tuning.latDeltaDeg) || 0);
       effectiveLon = sensorBaseLon + (Number(stoneFit.tuning.lonDeltaDeg) || 0);
       effectiveAltM = Math.max(
@@ -1152,6 +1163,18 @@ export function runMultiModelDarkFlight(
         min: 0.4,
         max: 1.8,
         step: 0.05,
+      },
+      {
+        key: 'windDirDeltaDeg',
+        label: 'Wind Direction Offset Δθ_wind (°)',
+        beforeValue: 0,
+        afterValue: Number(activeT.windDirDeltaDeg ?? 0),
+        beforeFormatted: `${windHeadingDeg.toFixed(0)}° (+0.0°)`,
+        afterFormatted: `${((windHeadingDeg + Number(activeT.windDirDeltaDeg ?? 0) + 360) % 360).toFixed(0)}° (${Number(activeT.windDirDeltaDeg ?? 0) >= 0 ? '+' : ''}${Number(activeT.windDirDeltaDeg ?? 0).toFixed(1)}°)`,
+        deltaFormatted: `${Number(activeT.windDirDeltaDeg ?? 0) >= 0 ? '+' : ''}${Number(activeT.windDirDeltaDeg ?? 0).toFixed(1)}°`,
+        min: -25,
+        max: 25,
+        step: 1,
       },
       {
         key: 'shapeFactor',
@@ -1236,6 +1259,25 @@ export function runMultiModelDarkFlight(
         min: 0,
         max: 6.0,
         step: 0.2,
+      },
+      {
+        key: 'bolideCount',
+        label: 'Bolide Flare Count (0=Intact .. 5=Multi)',
+        beforeValue: Array.isArray(nexradGate?.flareAltitudesKm)
+          ? nexradGate.flareAltitudesKm.length
+          : 2,
+        afterValue: Number(
+          activeT.bolideCount ??
+            (Array.isArray(nexradGate?.flareAltitudesKm)
+              ? nexradGate.flareAltitudesKm.length
+              : 2),
+        ),
+        beforeFormatted: `${Array.isArray(nexradGate?.flareAltitudesKm) ? nexradGate.flareAltitudesKm.length : 2} Bolides`,
+        afterFormatted: `${Number(activeT.bolideCount ?? (Array.isArray(nexradGate?.flareAltitudesKm) ? nexradGate.flareAltitudesKm.length : 2))} Bolide(s)`,
+        deltaFormatted: `${Number(activeT.bolideCount ?? 2) - 2 >= 0 ? '+' : ''}${Number(activeT.bolideCount ?? 2) - 2}`,
+        min: 0,
+        max: 5,
+        step: 1,
       },
       {
         key: 'groundElevationM',
@@ -1323,6 +1365,52 @@ export function runMultiModelDarkFlight(
     effectiveAltM + upperFlareOffsetKm * 1000 * Math.tan(elevRad),
   );
   const flare1Sounding = scaleSoundingWind(activeSounding, 1.22);
+
+  // Universal 3D Upper Flare (F1) Sky Position along the atmospheric entry ray:
+  // Resolves F1 altitude from (1) radar/GLM flare profile, (2) GMN measured peakAltKm,
+  // (3) camera pixel-streak light-curve peak, or (4) universal aerodynamic ram-pressure
+  // fracture onset P_dyn(z) = rho_0 * exp(-z/H) * v_entry^2 = sigma_onset (0.085 MPa).
+  const endAltKm = effectiveAltM / 1000;
+  const startAltKm =
+    Number(event?.trajectory?.startAltKm) ||
+    (Array.isArray(event?.possibleMatches)
+      ? event.possibleMatches
+          .map((m) => allEvents.find((e) => e.id === m.id)?.trajectory?.startAltKm)
+          .find((v) => Number.isFinite(v) && v > endAltKm)
+      : null) ||
+    Math.max(endAltKm + 24, 78);
+  const entryVelKmS =
+    Number(event?.trajectory?.entryVelocity) ||
+    (Array.isArray(event?.possibleMatches)
+      ? event.possibleMatches
+          .map((m) => allEvents.find((e) => e.id === m.id)?.trajectory?.entryVelocity)
+          .find((v) => Number.isFinite(v) && v > 0)
+      : null) ||
+    14.6;
+  const onsetRho = 85000 / Math.max(1e6, (entryVelKmS * 1000) ** 2);
+  const physicsOnsetAltKm = Math.max(
+    endAltKm + 8,
+    Math.min(startAltKm - 4, -7.4 * Math.log(onsetRho / 1.225)),
+  );
+  const measuredF1AltKm =
+    (Array.isArray(nexradGate?.flareAltitudesKm) &&
+    nexradGate.flareAltitudesKm[0] > endAltKm + 3
+      ? Number(nexradGate.flareAltitudesKm[0])
+      : null) ||
+    (Number(event?.trajectory?.peakAltKm) > endAltKm + 3
+      ? Number(event.trajectory.peakAltKm)
+      : null) ||
+    physicsOnsetAltKm;
+  const trueF1AltKm = Math.round(measuredF1AltKm * 10) / 10;
+  const trueF1UpRangeKm =
+    Math.max(0, trueF1AltKm - endAltKm) / Math.max(0.15, Math.tan(elevRad));
+  const trueF1Lat =
+    effectiveLat +
+    (trueF1UpRangeKm * 1000 * Math.cos(upRangeAzRad)) / METERS_PER_DEG_LAT;
+  const trueF1Lon =
+    effectiveLon +
+    (trueF1UpRangeKm * 1000 * Math.sin(upRangeAzRad)) /
+      (METERS_PER_DEG_LAT * cosLat);
 
   const activeTuning = stoneFit?.tuning || baselineTuning;
   const effectiveGroundElevM = Number.isFinite(
@@ -1475,8 +1563,44 @@ export function runMultiModelDarkFlight(
           flare1Sounding,
           'F1',
           CANONICAL_MASS_SWEEP.filter((b) => b.massKg <= 0.3),
-        )
+        ).map((band) => {
+          // Prepend the 3D hypersonic coast segment from the true Upper Flare (trueF1Lat, trueF1Lon, trueF1AltKm)
+          // down the entry trajectory tube so F1 curves originate at the true 61.5 km F1 flare in 3D space.
+          if (Array.isArray(band.track) && band.track.length > 0) {
+            return {
+              ...band,
+              track: [
+                {
+                  lat: trueF1Lat,
+                  lon: trueF1Lon,
+                  altM: trueF1AltKm * 1000,
+                },
+                ...band.track,
+              ],
+            };
+          }
+          return band;
+        })
       : [];
+
+  if (upperFlareOffsetKm > 0 && Array.isArray(stoneFit?.comparisons)) {
+    for (const comp of stoneFit.comparisons) {
+      if (
+        comp.fragmentationEpisode === 'F1 (Upper Flare)' &&
+        Array.isArray(comp.simulated?.track) &&
+        comp.simulated.track.length > 0
+      ) {
+        comp.simulated.track = [
+          {
+            lat: trueF1Lat,
+            lon: trueF1Lon,
+            altM: trueF1AltKm * 1000,
+          },
+          ...comp.simulated.track,
+        ];
+      }
+    }
+  }
 
   // Primary composite massSweep spans the full strewn field (F2 1kg..50g + F1 30g..3g)
   // while both full F2 (1kg->3g) and F1 (300g->3g) sweeps are preserved in `subBolides`.
@@ -1543,29 +1667,71 @@ export function runMultiModelDarkFlight(
 
   const ellipse2Sigma = computeStrewnFieldEllipse(monteCarloImpacts, 2);
   const ellipseInnerCore = computeStrewnFieldEllipse(monteCarloImpacts, 1);
-  const subBolides =
-    upperFlareOffsetKm > 0
-      ? [
-          {
-            id: 'F1',
-            label: `Sub-Bolide F1 (Upper Flare · ${(flare1AltM / 1000).toFixed(1)} km · 3g–300g)`,
-            lat: Math.round(flare1Lat * 100000) / 100000,
-            lon: Math.round(flare1Lon * 100000) / 100000,
-            altKm: Math.round((flare1AltM / 1000) * 10) / 10,
-            massSweep: f1Sweep,
-            ellipse2Sigma: computeStrewnFieldEllipse(f1Impacts, 2),
-          },
-          {
-            id: 'F2',
-            label: `Sub-Bolide F2 (Terminal Breakup · ${(effectiveAltM / 1000).toFixed(1)} km · 3g–1kg)`,
-            lat: Math.round(effectiveLat * 100000) / 100000,
-            lon: Math.round(effectiveLon * 100000) / 100000,
-            altKm: Math.round((effectiveAltM / 1000) * 10) / 10,
-            massSweep: f2Sweep,
-            ellipse2Sigma: computeStrewnFieldEllipse(f2Impacts, 2),
-          },
-        ]
-      : [];
+
+  // Locate the 3D Dark-Flight Retardation Knee (~30 km altitude) along the reference 50g trajectory
+  const refTrack =
+    (f2Sweep.find((b) => b.massKg === 0.05) || f2Sweep[0])?.track || [];
+  const retKneePt =
+    refTrack.find((pt) => pt.altM <= Math.min(31500, effectiveAltM * 0.72)) ||
+    null;
+
+  // Compute dynamic N-bolide Weibull fracture cascade (N ∈ {0, 1, 2, 3, 4, 5})
+  // so meteoroids with 0, 1, 2, 3, or 4+ bolide flares are each placed at their
+  // exact 3D altitude along the atmospheric entry trajectory ray.
+  const aeroForCascade = computeAerodynamicBreakupPhysics(event);
+  const cascadeSpec = computeWeibullFractureCascade(event, aeroForCascade, {
+    nexrad: nexradGate,
+    bolideCountOverride:
+      activeTuning.bolideCount !== undefined
+        ? Number(activeTuning.bolideCount)
+        : upperFlareOffsetKm === 0 && activeTuning.bolideCount === undefined && foundStones.length === 0
+          ? null
+          : null,
+  });
+
+  const subBolides = (cascadeSpec.episodes || []).map((ep, idx, arr) => {
+    const epUpRangeKm =
+      Math.max(0, ep.flareAltKm - endAltKm) / Math.max(0.15, Math.tan(elevRad));
+    const epSkyLat =
+      effectiveLat +
+      (epUpRangeKm * 1000 * Math.cos(upRangeAzRad)) / METERS_PER_DEG_LAT;
+    const epSkyLon =
+      effectiveLon +
+      (epUpRangeKm * 1000 * Math.sin(upRangeAzRad)) /
+        (METERS_PER_DEG_LAT * cosLat);
+    const isUpper = idx === 0 && arr.length >= 2 && f1Sweep.length > 0;
+    return {
+      id: ep.id,
+      label: `Sub-Bolide ${ep.id} (${ep.stageName} · ${ep.flareAltKm.toFixed(1)} km · ${ep.massSharePct}% shed)`,
+      lat: Math.round(epSkyLat * 100000) / 100000,
+      lon: Math.round(epSkyLon * 100000) / 100000,
+      altKm: ep.flareAltKm,
+      pDynMpa: ep.pDynMpa,
+      massSharePct: ep.massSharePct,
+      maxChildGrams: ep.maxChildGrams,
+      retardationLat: isUpper
+        ? Math.round(flare1Lat * 100000) / 100000
+        : retKneePt
+          ? Math.round(retKneePt.lat * 100000) / 100000
+          : null,
+      retardationLon: isUpper
+        ? Math.round(flare1Lon * 100000) / 100000
+        : retKneePt
+          ? Math.round(retKneePt.lon * 100000) / 100000
+          : null,
+      retardationAltKm: isUpper
+        ? Math.round((flare1AltM / 1000) * 10) / 10
+        : retKneePt
+          ? Math.round((retKneePt.altM / 1000) * 10) / 10
+          : null,
+      massSweep: isUpper ? f1Sweep : idx === arr.length - 1 ? f2Sweep : [],
+      ellipse2Sigma: isUpper
+        ? computeStrewnFieldEllipse(f1Impacts, 2)
+        : idx === arr.length - 1
+          ? computeStrewnFieldEllipse(f2Impacts, 2)
+          : null,
+    };
+  });
 
   // Cross-reference 1: Spine vs Monte Carlo centroid agreement
   const spine100g =
@@ -1630,7 +1796,7 @@ export function runMultiModelDarkFlight(
     ...f1Sweep.map((b) => ({
       episode: 'F1 (Upper Flare)',
       massGrams: Math.round(b.massKg * 1000 * 10) / 10,
-      releaseAltKm: Math.round((flare1AltM / 1000) * 10) / 10,
+      releaseAltKm: trueF1AltKm,
       landingLat: b.lat,
       landingLon: b.lon,
       impactSpeedMs: b.impactSpeedMs,

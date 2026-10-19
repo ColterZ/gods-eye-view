@@ -298,20 +298,36 @@ export function resetFoundStonesForEvent(event) {
 }
 
 /**
- * Scale wind velocity components in a sounding by `windScale`.
+ * Scale wind velocity components and optionally rotate wind direction by `windDirDeltaDeg`
+ * (within reanalysis grid uncertainty ±12°) without altering the 3D fireball trajectory.
  */
-export function scaleSoundingWind(sounding, windScale = 1.0) {
-  if (!sounding || !Array.isArray(sounding.samples) || windScale === 1.0) {
+export function scaleSoundingWind(
+  sounding,
+  windScale = 1.0,
+  windDirDeltaDeg = 0,
+) {
+  if (
+    !sounding ||
+    !Array.isArray(sounding.samples) ||
+    (windScale === 1.0 && !windDirDeltaDeg)
+  ) {
     return sounding;
   }
+  const rotRad = (Number(windDirDeltaDeg) || 0) * DEG_TO_RAD;
+  const cosR = Math.cos(rotRad);
+  const sinR = Math.sin(rotRad);
   return {
     ...sounding,
-    samples: sounding.samples.map((s) => ({
-      ...s,
-      speedMs: s.speedMs * windScale,
-      u: s.u * windScale,
-      v: s.v * windScale,
-    })),
+    samples: sounding.samples.map((s) => {
+      const u0 = s.u * windScale;
+      const v0 = s.v * windScale;
+      return {
+        ...s,
+        speedMs: s.speedMs * windScale,
+        u: u0 * cosR + v0 * sinR,
+        v: -u0 * sinR + v0 * cosR,
+      };
+    }),
   };
 }
 
@@ -337,6 +353,7 @@ export function evaluateFoundStoneResiduals({
   }
 
   const windScale = Number.isFinite(tuning.windScale) ? tuning.windScale : 1.0;
+  const windDirDeltaDeg = Number(tuning.windDirDeltaDeg) || 0;
   const shapeFactor = Number.isFinite(tuning.shapeFactor)
     ? tuning.shapeFactor
     : 1.15;
@@ -354,7 +371,11 @@ export function evaluateFoundStoneResiduals({
     : 0.018;
   const liftToDragRatio = Number(tuning.liftToDragRatio) || 0;
   const verticalWindMs = Number(tuning.verticalWindMs) || 0;
-  const scaledSounding = scaleSoundingWind(sounding, windScale);
+  const scaledSounding = scaleSoundingWind(
+    sounding,
+    windScale,
+    windDirDeltaDeg,
+  );
 
   const effAzDeg = (azimuthDeg + azDelta + 360) % 360;
   const baseLat = terminalLat + latDeltaDeg;
@@ -375,7 +396,11 @@ export function evaluateFoundStoneResiduals({
       (METERS_PER_DEG_LAT * cosLat));
   const flare1AltM =
     baseAltM + upperFlareOffsetKm * 1000 * Math.tan(elevRad);
-  const flare1Sounding = scaleSoundingWind(sounding, windScale * 1.22);
+  const flare1Sounding = scaleSoundingWind(
+    sounding,
+    windScale * 1.22,
+    windDirDeltaDeg,
+  );
 
   const comparisons = [];
   let sumSq = 0;
@@ -506,33 +531,55 @@ export function autoFitDarkFlightToFoundStones({
 
   let bestTuning = {
     windScale: 1.0,
+    windDirDeltaDeg: 0,
     shapeFactor: 1.15,
     altDeltaKm: 0,
     latDeltaDeg: 0,
     lonDeltaDeg: 0,
     azimuthDeltaDeg: 0,
     speedScale: 1.0,
+    upperFlareOffsetKm: 0,
   };
   let bestEval = baseline;
+  const cosLat = Math.max(0.05, Math.cos(terminalLat * DEG_TO_RAD));
 
-  // Fast coordinate-descent + joint multi-stage fragmentation search using dtSec=1.0 (recordTrack=false)
-  // so RK4 remains numerically exact at 45.5 km while completing in <600 ms on the main thread.
-  const windScales = [0.6, 0.9, 1.25];
-  const shapeFactors = [1.15, 1.4];
-  const azDeltas = [0, 6, 12];
-  const speedScales = [0.85, 1.25, 1.6];
+  // Tikhonov Bayesian prior regularization penalty (meters):
+  // Multi-camera sightlines tightly constrain the 3D trajectory line (cross-track σ ≈ 350m,
+  // azimuth σ ≈ 1.5°), whereas reanalysis wind profiles and fragment drag/release along the
+  // flare column carry the true dark-flight uncertainty. Penalize shifting or rotating the
+  // starting trajectory so the solver fits via wind/aerodynamics/along-track release first.
+  const computeRegularizedObjective = (rmsM, t) => {
+    const shiftM = Math.hypot(
+      (t.latDeltaDeg || 0) * METERS_PER_DEG_LAT,
+      (t.lonDeltaDeg || 0) * METERS_PER_DEG_LAT * cosLat,
+    );
+    const azPenM = Math.abs(t.azimuthDeltaDeg || 0) * 38; // 38m penalty per degree of heading twist
+    const shiftPenM = shiftM * 0.45; // 45% penalty on moving the 3D camera terminus off-track
+    const windPenM = Math.abs((t.windScale || 1) - 1) * 40;
+    return rmsM + azPenM + shiftPenM + windPenM;
+  };
+  let bestObj = computeRegularizedObjective(baseline.rmsErrorM, bestTuning);
+
+  // Stage 1: Trajectory-Locked Aerodynamic & Wind Profile Optimization
+  // Fits windScale, windDirDeltaDeg (reanalysis wind rotation), shapeFactor, and speedScale
+  // with ZERO change to the starting 3D trajectory coordinates (latDelta=0, lonDelta=0).
+  const windScales = [0.65, 0.85, 1.0, 1.2];
+  const windDirDeltas = [-10, -4, 0, 5, 10];
+  const shapeFactors = [1.1, 1.28, 1.45];
+  const speedScales = [0.9, 1.15, 1.4];
 
   for (const windScale of windScales) {
-    for (const shapeFactor of shapeFactors) {
-      for (const azimuthDeltaDeg of azDeltas) {
+    for (const windDirDeltaDeg of windDirDeltas) {
+      for (const shapeFactor of shapeFactors) {
         for (const speedScale of speedScales) {
           const tuning = {
             windScale,
+            windDirDeltaDeg,
             shapeFactor,
             altDeltaKm: 0,
             latDeltaDeg: 0,
             lonDeltaDeg: 0,
-            azimuthDeltaDeg,
+            azimuthDeltaDeg: 0,
             speedScale,
             upperFlareOffsetKm: 0,
           };
@@ -549,58 +596,57 @@ export function autoFitDarkFlightToFoundStones({
             recordTrack: false,
             dtSec: 1.0,
           });
-          if (
-            res.rmsErrorM !== null &&
-            (bestEval.rmsErrorM === null || res.rmsErrorM < bestEval.rmsErrorM)
-          ) {
-            bestEval = res;
-            bestTuning = tuning;
+          if (res.rmsErrorM !== null) {
+            const obj = computeRegularizedObjective(res.rmsErrorM, tuning);
+            if (obj < bestObj) {
+              bestObj = obj;
+              bestEval = res;
+              bestTuning = tuning;
+            }
           }
         }
       }
     }
   }
 
-  // Stage 2: Fine-tune terminus release point (latDeltaDeg, lonDeltaDeg) jointly with
-  // speedScale, windScale, and Multi-Stage Fragmentation (upperFlareOffsetKm for 2-flare breakups)
-  const latOffsets = [-0.008, -0.003, 0, 0.004];
-  const lonOffsets = [0, 0.02, 0.032];
-  const stage2Speeds = [1.0, 1.35, 1.6];
-  const stage2Winds = [0.55, 0.85];
+  // Stage 2: Sightline-Constrained Along-Track Flare Release & Micro-Refinement
+  // Keeps trajectory heading within camera 1σ (0°..+2°) and terminus within ±350m,
+  // while testing multi-stage progressive fragmentation (upperFlareOffsetKm) along the track.
+  const latOffsets = [-0.003, 0, 0.002];
+  const lonOffsets = [-0.002, 0, 0.003];
+  const azDeltas = [0, 1.5];
   const upperFlareOffsetsKm = stones.length >= 2 ? [0, 1.4, 2.2] : [0];
   const baseBest = { ...bestTuning };
 
   for (const latDeltaDeg of latOffsets) {
     for (const lonDeltaDeg of lonOffsets) {
-      for (const speedScale of stage2Speeds) {
-        for (const windScale of stage2Winds) {
-          for (const upperFlareOffsetKm of upperFlareOffsetsKm) {
-            const tuning = {
-              ...baseBest,
-              windScale,
-              speedScale,
-              latDeltaDeg,
-              lonDeltaDeg,
-              altDeltaKm: 0,
-              upperFlareOffsetKm,
-            };
-            const res = evaluateFoundStoneResiduals({
-              stones,
-              terminalLat,
-              terminalLon,
-              terminalAltM,
-              terminalSpeedMs,
-              azimuthDeg,
-              entryAngleDeg,
-              sounding,
-              tuning,
-              recordTrack: false,
-              dtSec: 1.0,
-            });
-            if (
-              res.rmsErrorM !== null &&
-              (bestEval.rmsErrorM === null || res.rmsErrorM < bestEval.rmsErrorM)
-            ) {
+      for (const azimuthDeltaDeg of azDeltas) {
+        for (const upperFlareOffsetKm of upperFlareOffsetsKm) {
+          const tuning = {
+            ...baseBest,
+            latDeltaDeg,
+            lonDeltaDeg,
+            azimuthDeltaDeg,
+            altDeltaKm: 0,
+            upperFlareOffsetKm,
+          };
+          const res = evaluateFoundStoneResiduals({
+            stones,
+            terminalLat,
+            terminalLon,
+            terminalAltM,
+            terminalSpeedMs,
+            azimuthDeg,
+            entryAngleDeg,
+            sounding,
+            tuning,
+            recordTrack: false,
+            dtSec: 1.0,
+          });
+          if (res.rmsErrorM !== null) {
+            const obj = computeRegularizedObjective(res.rmsErrorM, tuning);
+            if (obj < bestObj) {
+              bestObj = obj;
               bestEval = res;
               bestTuning = tuning;
             }
@@ -628,7 +674,6 @@ export function autoFitDarkFlightToFoundStones({
     bestEval = finalEval;
   }
 
-  const cosLat = Math.max(0.05, Math.cos(terminalLat * DEG_TO_RAD));
   const terminusShiftM = Math.round(
     Math.hypot(
       bestTuning.latDeltaDeg * METERS_PER_DEG_LAT,

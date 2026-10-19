@@ -777,7 +777,14 @@ export function evaluateEventSanityAndOverUnder(
 
   const weibullCascade = computeWeibullFractureCascade(event, aeroPhysics, {
     opticalEntryMassKg,
+    acousticEntryMassKg,
     nexrad,
+    asgardRec,
+    gmnRec,
+    bolideCountOverride:
+      dfResult?.stoneFit?.tuning?.bolideCount !== undefined
+        ? Number(dfResult.stoneFit.tuning.bolideCount)
+        : null,
   });
 
   const longApproach = computeLongApproachTrajectory(event, trajPartner);
@@ -824,69 +831,249 @@ export function evaluateEventSanityAndOverUnder(
 
 /**
  * Compute Weibull size-dependent progressive fracture cascade
- * (σ_frag = σ_0 * (m_0 / m)^α) across upper and terminal breakup flares.
+ * (σ_frag = σ_0 * (m_0 / m)^α) across N ∈ {0, 1, 2, 3, 4, 5} bolide fragmentation
+ * episodes derived dynamically from all available sensor & physical data.
  */
 export function computeWeibullFractureCascade(
   event,
   aeroPhysics,
   {
     opticalEntryMassKg = null,
+    acousticEntryMassKg = null,
     nexrad = null,
+    asgardRec = null,
+    gmnRec = null,
+    bolideCountOverride = null,
     sigma0Mpa = 0.42,
     weibullAlpha = 0.18,
   } = {},
 ) {
   const parentMassKg = Math.max(
-    1,
-    Number(opticalEntryMassKg) || Number(event?.mass) || 77.1,
-  );
-  const pDynTerminalMpa = Math.max(
     0.05,
+    Number(opticalEntryMassKg) ||
+      Number(event?.mass) ||
+      Number(acousticEntryMassKg) ||
+      25.0,
+  );
+  const startAltKm = Number(aeroPhysics?.startAltKm) || 82.0;
+  const endAltKm = Number(aeroPhysics?.endAltKm) || 45.5;
+  const pDynTerminalMpa = Math.max(
+    0.01,
     Number(aeroPhysics?.ramPressureMpa) || 0.95,
   );
-  const flareAltsKm =
-    Array.isArray(nexrad?.flareAltitudesKm) && nexrad.flareAltitudesKm.length >= 2
-      ? nexrad.flareAltitudesKm
-      : [
-          Math.round(((Number(aeroPhysics?.endAltKm) || 45.5) + 1.8) * 10) / 10,
-          Number(aeroPhysics?.endAltKm) || 45.5,
-        ];
-  const pDynUpperMpa = Math.max(0.04, Math.round(pDynTerminalMpa * 0.68 * 100) / 100);
   const alpha = Math.max(0.08, Math.min(0.45, Number(weibullAlpha) || 0.18));
   const s0 = Math.max(0.05, Number(sigma0Mpa) || 0.42);
+  const entryVelKmS =
+    Number(
+      asgardRec?.trajectory?.entryVelocity ||
+        gmnRec?.trajectory?.entryVelocity ||
+        event?.trajectory?.entryVelocity,
+    ) || 14.6;
 
-  // Weibull inversion: m_max(z) = m_0 * (σ_0 / P_dyn(z))^(1/α)
-  const maxChildUpperKg = Math.min(
-    parentMassKg * 0.25,
-    parentMassKg * Math.pow(s0 / Math.max(s0, pDynUpperMpa), 1 / alpha),
-  );
-  const maxChildTerminalKg = Math.min(
-    parentMassKg * 0.15,
-    parentMassKg * Math.pow(s0 / Math.max(s0, pDynTerminalMpa), 1 / alpha),
-  );
+  // Compute physical onset altitude where P_dyn(z) = rho_0 * exp(-z/H) * v^2 = sigma_onset (0.085 MPa)
+  const onsetRho = 85000 / Math.max(1e6, (entryVelKmS * 1000) ** 2);
+  const physicsOnsetAltKm = Math.round(
+    Math.max(
+      endAltKm + 6,
+      Math.min(startAltKm - 4, -7.4 * Math.log(onsetRho / 1.225)),
+    ) * 10,
+  ) / 10;
 
-  // Relative mass shedding split between Flare 1 (Upper) and Flare 2 (Terminal)
-  const f1Ratio =
-    pDynUpperMpa / Math.max(0.05, pDynUpperMpa + pDynTerminalMpa);
-  const flare1SharePct = Math.round(Math.max(18, Math.min(65, f1Ratio * 100)));
-  const flare2SharePct = 100 - flare1SharePct;
+  // Gather observational signals for bolide count N (0, 1, 2, 3, 4+)
+  const cameraPeaks =
+    asgardRec?.verifiedMedia?.[0]?.frameAnalysis?.detectedFlares ||
+    event?.verifiedMedia?.[0]?.frameAnalysis?.detectedFlares ||
+    [];
+  const sightlines =
+    asgardRec?.sightlineSummary || event?.sightlineSummary || null;
+  const fragWitnessRatio =
+    sightlines?.rayCount >= 5
+      ? sightlines.fragmentationCount / sightlines.rayCount
+      : null;
+  const energySpreadRatio =
+    Number(opticalEntryMassKg) > 0 && Number(acousticEntryMassKg) > 0
+      ? Number(acousticEntryMassKg) / Number(opticalEntryMassKg)
+      : 1.0;
+
+  // Determine natural bolide flare count N ∈ {0, 1, 2, 3, 4} from data + Weibull physics
+  let derivedBolideCount = 2;
+  let candidateAltsKm = [];
+
+  if (
+    Array.isArray(nexrad?.flareAltitudesKm) &&
+    nexrad.flareAltitudesKm.length > 0
+  ) {
+    candidateAltsKm = nexrad.flareAltitudesKm
+      .slice()
+      .sort((a, b) => b - a);
+    derivedBolideCount = candidateAltsKm.length;
+  } else if (cameraPeaks.length > 0) {
+    candidateAltsKm = cameraPeaks
+      .map((p) => p.impliedAltKm)
+      .filter((z) => Number.isFinite(z))
+      .sort((a, b) => b - a);
+    derivedBolideCount = candidateAltsKm.length;
+  } else if (
+    pDynTerminalMpa < 0.08 ||
+    (endAltKm > 68 && fragWitnessRatio === 0)
+  ) {
+    // 0 Bolides: meteoroid never reaches fracture ram pressure or ablates smoothly at high altitude
+    derivedBolideCount = 0;
+    candidateAltsKm = [];
+  } else if (
+    pDynTerminalMpa < 0.32 ||
+    parentMassKg < 1.5 ||
+    (fragWitnessRatio !== null && fragWitnessRatio < 0.08 && energySpreadRatio < 1.5)
+  ) {
+    // 1 Bolide: single terminal breakup
+    derivedBolideCount = 1;
+    candidateAltsKm = [endAltKm];
+  } else if (
+    pDynTerminalMpa >= 2.6 &&
+    parentMassKg >= 200 &&
+    startAltKm - endAltKm >= 36
+  ) {
+    // 4 Bolides: rare large multi-pulse fragmentation cascade
+    derivedBolideCount = 4;
+  } else if (
+    pDynTerminalMpa >= 1.45 ||
+    energySpreadRatio >= 4.0 ||
+    (fragWitnessRatio !== null && fragWitnessRatio >= 0.35 && parentMassKg >= 35)
+  ) {
+    // 3 Bolides: upper shedding + mid-stratospheric split + deep terminal airburst
+    derivedBolideCount = 3;
+  } else {
+    // 2 Bolides: upper matrix disruption + main core breakup
+    derivedBolideCount = 2;
+  }
+
+  const bolideCount =
+    bolideCountOverride !== null &&
+    Number.isFinite(Number(bolideCountOverride)) &&
+    Number(bolideCountOverride) >= 0
+      ? Math.min(5, Math.max(0, Math.round(Number(bolideCountOverride))))
+      : derivedBolideCount;
+
+  // Build exact altitude list for `bolideCount` episodes
+  let flareAltsKm = [];
+  if (bolideCount === 0) {
+    flareAltsKm = [];
+  } else if (bolideCount === 1) {
+    flareAltsKm = [Math.round(endAltKm * 10) / 10];
+  } else if (candidateAltsKm.length === bolideCount) {
+    flareAltsKm = candidateAltsKm.map((z) => Math.round(z * 10) / 10);
+  } else {
+    const topAlt =
+      candidateAltsKm.length > 0
+        ? Math.max(endAltKm + 6, candidateAltsKm[0])
+        : physicsOnsetAltKm;
+    for (let i = 0; i < bolideCount; i++) {
+      const frac = bolideCount === 1 ? 1 : i / (bolideCount - 1);
+      const z = topAlt - frac * (topAlt - endAltKm);
+      flareAltsKm.push(Math.round(z * 10) / 10);
+    }
+  }
+
+  // Compute per-episode Weibull physics (P_dyn, mass share, max child fragment size)
+  const episodes = [];
+  let rawWeightSum = 0;
+  for (let i = 0; i < flareAltsKm.length; i++) {
+    const zKm = flareAltsKm[i];
+    // Dynamic ram pressure scales with atmospheric scale height H ≈ 7.2 km relative to endAltKm
+    const pDynMpa =
+      Math.round(
+        Math.max(
+          0.03,
+          pDynTerminalMpa * Math.exp(-(zKm - endAltKm) / 14.5),
+        ) * 1000,
+      ) / 1000;
+    const rawWeight = Math.pow(pDynMpa, 0.75);
+    rawWeightSum += rawWeight;
+    const maxChildKg = Math.min(
+      parentMassKg * (0.28 / (i + 1)),
+      parentMassKg * Math.pow(s0 / Math.max(s0, pDynMpa), 1 / alpha),
+    );
+    const stageNames =
+      bolideCount === 1
+        ? ['Terminal Airburst']
+        : bolideCount === 2
+          ? ['Upper Flare', 'Main Breakup']
+          : bolideCount === 3
+            ? ['Upper Shedding', 'Primary Airburst', 'Deep Core Breakup']
+            : [
+                'Initial Matrix Flaking',
+                'Upper-Stratospheric Split',
+                'Primary Airburst',
+                'Deep Core Disruption',
+                'Terminal Fragmentation',
+              ];
+    episodes.push({
+      id: `F${i + 1}`,
+      index: i,
+      stageName: stageNames[i] || `Flare #${i + 1}`,
+      flareAltKm: zKm,
+      pDynMpa,
+      rawWeight,
+      massSharePct: 0,
+      maxChildGrams: Math.max(3, Math.round(maxChildKg * 1000)),
+      retardationWeight:
+        bolideCount <= 1 ? 0 : (bolideCount - 1 - i) / (bolideCount - 1),
+    });
+  }
+
+  let runningPct = 0;
+  for (let i = 0; i < episodes.length; i++) {
+    if (i === episodes.length - 1) {
+      episodes[i].massSharePct = Math.max(1, 100 - runningPct);
+    } else {
+      const pct = Math.max(
+        8,
+        Math.round((episodes[i].rawWeight / Math.max(1e-5, rawWeightSum)) * 100),
+      );
+      episodes[i].massSharePct = pct;
+      runningPct += pct;
+    }
+    delete episodes[i].rawWeight;
+  }
+
+  const flare1SharePct =
+    episodes.length >= 2
+      ? episodes[0].massSharePct
+      : episodes.length === 1
+        ? 100
+        : 0;
+  const flare2SharePct =
+    episodes.length >= 2 ? 100 - flare1SharePct : 0;
   const powerLawExponent =
     Math.round((1.65 + 0.18 * Math.min(2.5, pDynTerminalMpa / s0)) * 100) / 100;
 
+  const epSummary =
+    bolideCount === 0
+      ? `0 Explosive Bolides (P_dyn=${pDynTerminalMpa} MPa < fracture threshold — continuous single-body ablation/deceleration)`
+      : episodes
+          .map(
+            (ep) =>
+              `${ep.id} (${ep.stageName} @ ${ep.flareAltKm} km, P_dyn=${ep.pDynMpa} MPa) sheds ${ep.massSharePct}%`,
+          )
+          .join(' · ');
+
   return {
+    bolideCount,
+    derivedBolideCount,
     parentMassKg: Math.round(parentMassKg * 10) / 10,
     sigma0Mpa: s0,
     weibullAlpha: alpha,
-    flare1AltKm: flareAltsKm[0],
-    flare2AltKm: flareAltsKm[flareAltsKm.length - 1],
-    pDynUpperMpa,
+    flare1AltKm: episodes[0]?.flareAltKm ?? endAltKm,
+    flare2AltKm: episodes[episodes.length - 1]?.flareAltKm ?? endAltKm,
+    pDynUpperMpa: episodes[0]?.pDynMpa ?? pDynTerminalMpa,
     pDynTerminalMpa,
     flare1SharePct,
     flare2SharePct,
-    maxChildUpperGrams: Math.max(5, Math.round(maxChildUpperKg * 1000)),
-    maxChildTerminalGrams: Math.max(5, Math.round(maxChildTerminalKg * 1000)),
+    maxChildUpperGrams: episodes[0]?.maxChildGrams ?? 50,
+    maxChildTerminalGrams: episodes[episodes.length - 1]?.maxChildGrams ?? 50,
     powerLawExponent,
-    summary: `Weibull Cascade (σ₀=${s0} MPa, α=${alpha}): F1 (${flareAltsKm[0]} km, P_dyn=${pDynUpperMpa} MPa) sheds ${flare1SharePct}% of surviving mass · F2 (${flareAltsKm[flareAltsKm.length - 1]} km, P_dyn=${pDynTerminalMpa} MPa) sheds ${flare2SharePct}% (power-law β=${powerLawExponent})`,
+    episodes,
+    summary: `Weibull Cascade (${bolideCount} Bolide${bolideCount === 1 ? '' : 's'} · σ₀=${s0} MPa, α=${alpha}): ${epSummary} (power-law β=${powerLawExponent})`,
   };
 }
 

@@ -401,9 +401,16 @@ export function createRendering({ layerState, services, components, config }) {
       if (Array.isArray(df.subBolides) && df.subBolides.length > 0) {
         const showCompact =
           (layerState._groundLabelsMode || 'compact') === 'compact';
+        const sbColors = {
+          F1: '#34d399',
+          F2: '#f59e0b',
+          F3: '#38bdf8',
+          F4: '#f43f5e',
+          F5: '#c084fc',
+        };
         for (const sb of df.subBolides) {
           const sbColor = Cesium.Color.fromCssColorString(
-            sb.id === 'F1' ? '#34d399' : '#f59e0b',
+            sbColors[sb.id] || '#f59e0b',
           );
           // 3D Sub-Bolide breakup origin marker along the atmospheric trajectory
           const sbOriginEnt = layerState._dataSource.entities.add({
