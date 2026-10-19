@@ -1,0 +1,424 @@
+/* Meteor / fireball right-rail context panel. Mirrors weather-panel chrome. */
+
+.meteor-panel-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  max-height: 100%;
+  box-sizing: border-box;
+  padding: 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--panel-radius);
+  background: var(--glass-bg);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+    0 1px 0 rgba(255, 255, 255, 0.06) inset;
+}
+
+#meteor-panel .panel-glow {
+  position: absolute;
+  inset: -18px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 140, 60, 0.14) 0%,
+    transparent 65%
+  );
+  filter: blur(16px);
+  opacity: 0.25;
+  pointer-events: none;
+}
+
+#meteor-panel .panel-header {
+  flex: 0 0 auto;
+}
+
+#meteor-panel-count {
+  color: var(--text-secondary);
+  font: 9px var(--font-mono);
+}
+
+#meteor-panel-body {
+  min-height: 0;
+  max-height: calc(var(--right-stack-max-height, 50svh) - 64px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 140, 60, 0.46) transparent;
+}
+
+#meteor-panel.collapsed #meteor-panel-body,
+#meteor-panel[hidden] {
+  display: none !important;
+}
+
+#meteor-panel.collapsed .panel-title {
+  font-size: 8px;
+  letter-spacing: 1.8px;
+}
+
+#meteor-panel.collapsed .panel-header {
+  margin-bottom: 2px;
+}
+
+#meteor-panel.collapsed .meteor-panel-inner {
+  padding-bottom: 10px;
+}
+
+/* Sections */
+
+.meteor-section {
+  min-width: 0;
+}
+
+.meteor-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 0;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: 9px/1.45 var(--font-mono);
+  letter-spacing: 0.5px;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+.meteor-section-header:hover,
+.meteor-section-header:focus-visible {
+  color: var(--text-secondary);
+}
+
+.meteor-section-title {
+  flex: 1 1 auto;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.3px;
+}
+
+.meteor-section-chevron {
+  flex: 0 0 auto;
+  font-size: 8px;
+  opacity: 0.7;
+  transition: transform 0.15s ease;
+}
+
+.meteor-section-header[aria-expanded='true'] .meteor-section-chevron {
+  transform: rotate(180deg);
+}
+
+.meteor-section-body {
+  padding-bottom: 10px;
+  overflow: hidden;
+}
+
+/* Chips */
+
+.meteor-chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.meteor-chip-group-label {
+  width: 100%;
+  color: var(--text-dim);
+  font: 8px/1.4 var(--font-mono);
+  letter-spacing: 0.5px;
+}
+
+.data-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 140, 60, 0.25);
+  border-radius: 4px;
+  background: rgba(255, 140, 60, 0.06);
+  color: var(--text-dim);
+  font: 8px/1.4 var(--font-mono);
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.data-chip:hover:not(:disabled) {
+  border-color: rgba(255, 140, 60, 0.5);
+  background: rgba(255, 140, 60, 0.12);
+  color: var(--text-secondary);
+}
+
+.data-chip.active {
+  border-color: rgba(255, 140, 60, 0.65);
+  background: rgba(255, 140, 60, 0.18);
+  color: #ffe8d6;
+}
+
+.data-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.data-chip.busy {
+  border-color: rgba(255, 210, 60, 0.5);
+  color: #ffe9a8;
+}
+
+/* Legend */
+
+.meteor-legend-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  padding: 4px 0 8px;
+}
+
+.meteor-legend-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 8px/1.45 var(--font-mono);
+  color: var(--text-dim);
+  letter-spacing: 0.3px;
+}
+
+.meteor-legend-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+/* Event list */
+
+.meteor-event-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.meteor-event-item {
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.meteor-event-item:last-child {
+  border-bottom: none;
+}
+
+.meteor-event-link {
+  display: block;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: 8px/1.4 var(--font-mono);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.meteor-event-link:hover {
+  background: rgba(255, 140, 60, 0.08);
+  color: var(--text-secondary);
+}
+
+.meteor-event-link.active {
+  background: rgba(255, 140, 60, 0.14);
+  color: #ffe8d6;
+}
+
+/* Info / pre */
+
+.meteor-info-text {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 140, 60, 0.15);
+  border-radius: 4px;
+  background: rgba(255, 140, 60, 0.04);
+  color: var(--text-dim);
+  font: 8px/1.5 var(--font-mono);
+  letter-spacing: 0.3px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Param tables (dark flight diagnostics, tuning, mass cascade) */
+
+.meteor-param-table {
+  width: 100%;
+  border-collapse: collapse;
+  font: 8px/1.4 var(--font-mono);
+  color: var(--text-dim);
+}
+
+.meteor-param-table th,
+.meteor-param-table td {
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 140, 60, 0.12);
+  text-align: left;
+  vertical-align: top;
+}
+
+.meteor-param-table thead th {
+  background: rgba(255, 140, 60, 0.08);
+  color: var(--text-secondary);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.meteor-param-label {
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.meteor-param-value {
+  color: var(--text-dim);
+}
+
+.meteor-param-before {
+  color: var(--text-dim);
+}
+
+.meteor-param-after {
+  color: var(--text-secondary);
+}
+
+/* Auto-fit summary */
+
+.meteor-autofit-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 4px 0;
+  font: 8px/1.4 var(--font-mono);
+  color: var(--text-dim);
+}
+
+.meteor-autofit-label {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.meteor-autofit-rms {
+  color: #ffd9a8;
+}
+
+/* Editable inputs */
+
+.data-input {
+  min-width: 0;
+  padding: 2px 4px;
+  border: 1px solid rgba(255, 140, 60, 0.25);
+  border-radius: 3px;
+  background: rgba(255, 140, 60, 0.06);
+  color: var(--text-secondary);
+  font: 8px/1.4 var(--font-mono);
+  letter-spacing: 0.2px;
+}
+
+.data-input:focus {
+  border-color: rgba(255, 140, 60, 0.55);
+  outline: none;
+  background: rgba(255, 140, 60, 0.12);
+}
+
+/* Stone table */
+
+.meteor-stone-table .meteor-stone-label-input {
+  width: 90px;
+}
+
+.meteor-stone-table .meteor-stone-mass-input {
+  width: 50px;
+}
+
+.meteor-stone-table .meteor-stone-lat-input,
+.meteor-stone-table .meteor-stone-lon-input {
+  width: 70px;
+}
+
+.meteor-stone-table .meteor-stone-type-input {
+  width: 60px;
+}
+
+.meteor-stone-error {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* Stone actions */
+
+.meteor-stone-actions {
+  white-space: nowrap;
+}
+
+.meteor-stone-actions button {
+  padding: 2px 4px;
+  border: 1px solid rgba(255, 140, 60, 0.2);
+  border-radius: 3px;
+  background: rgba(255, 140, 60, 0.06);
+  color: var(--text-dim);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.meteor-stone-actions button:hover {
+  border-color: rgba(255, 140, 60, 0.45);
+  background: rgba(255, 140, 60, 0.12);
+  color: var(--text-secondary);
+}
+
+.meteor-stone-delete:hover {
+  border-color: rgba(255, 80, 60, 0.45);
+  background: rgba(255, 80, 60, 0.12);
+  color: #ffd0d0;
+}
+
+.meteor-stone-add-btn {
+  display: block;
+  width: 100%;
+  padding: 6px;
+  border: 1px dashed rgba(255, 140, 60, 0.35);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: 8px/1.4 var(--font-mono);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.meteor-stone-add-btn:hover {
+  border-color: rgba(255, 140, 60, 0.6);
+  background: rgba(255, 140, 60, 0.08);
+  color: var(--text-secondary);
+}
+
+/* Mass cascade fly buttons */
+
+.meteor-mc-fly {
+  margin-left: 4px;
+  padding: 1px 3px;
+  border: 1px solid rgba(255, 140, 60, 0.25);
+  border-radius: 3px;
+  background: rgba(255, 140, 60, 0.06);
+  color: var(--text-dim);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.meteor-mc-fly:hover {
+  border-color: rgba(255, 140, 60, 0.5);
+  background: rgba(255, 140, 60, 0.12);
+  color: var(--text-secondary);
+}
