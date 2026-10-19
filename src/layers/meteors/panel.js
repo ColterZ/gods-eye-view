@@ -446,6 +446,9 @@ export function createMeteorPanel({
       if (na.multiSolverAndMediaAudit?.summary) {
         lines.push(`🎥 ${na.multiSolverAndMediaAudit.summary}`);
       }
+      if (na.fieldHunterKmzAudit?.summary) {
+        lines.push(`🧭 ${na.fieldHunterKmzAudit.summary}`);
+      }
     }
     if (val.seismic && !val.seismic.unavailable && Array.isArray(val.seismic.stations)) {
       const seis = val.seismic;

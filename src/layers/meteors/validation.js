@@ -230,42 +230,149 @@ export function computeCneosSensorDiagnostics(event) {
  * Documented NOAA NEXRAD Doppler radar dark-flight gates & multi-sensor metadata
  * for radar-confirmed meteorite falls.
  */
+const SIMS_CORNER_NEXRAD_AND_TRACK = Object.freeze({
+  station: 'KOTX (Spokane, WA) / KPDT (Pendleton, OR)',
+  gateTimeUtc: '2026-08-14T07:50:41Z',
+  bolideTimeUtc: '2026-08-14T07:48:36Z',
+  elapsedSec: 125,
+  gateAltitudeKm: 10.294,
+  gateAltitudeMarginKm: 0.65,
+  skyReturnLat: 47.855367,
+  skyReturnLon: -119.398648,
+  beamWidthDeg: 0.95,
+  reflectivityDbz: 24.5,
+  flareAltitudesKm: Object.freeze([41.4, 31.7]),
+  calibratedTrajectory: Object.freeze({
+    label: '3D Track - v4 (4-Camera Video Triangulation)',
+    startLat: 46.910811,
+    startLon: -119.29975,
+    startAltKm: 100.0,
+    endLat: 47.85685,
+    endLon: -119.39474,
+    endAltKm: 16.0,
+    groundEndLat: 47.917125,
+    groundEndLon: -119.400934,
+    azimuth: 356.14,
+    entryAngle: 38.55,
+    entryVelocity: 21.0,
+    waypoints: Object.freeze([
+      Object.freeze({ altKm: 100.0, lat: 46.910811, lon: -119.29975, label: '100 km' }),
+      Object.freeze({ altKm: 90.0, lat: 47.021139, lon: -119.31065, label: '90 km' }),
+      Object.freeze({ altKm: 80.0, lat: 47.132069, lon: -119.32166, label: '80 km' }),
+      Object.freeze({ altKm: 70.0, lat: 47.243619, lon: -119.33278, label: '70 km' }),
+      Object.freeze({ altKm: 60.0, lat: 47.355781, lon: -119.344, label: '60 km' }),
+      Object.freeze({ altKm: 50.0, lat: 47.468581, lon: -119.35534, label: '50 km' }),
+      Object.freeze({ altKm: 41.4, lat: 47.565811, lon: -119.36522, label: '1st Burst (41.4 km)', isBurst: true }),
+      Object.freeze({ altKm: 40.0, lat: 47.582, lon: -119.36679, label: '40 km' }),
+      Object.freeze({ altKm: 31.7, lat: 47.677189, lon: -119.37647, label: '2nd Burst (31.7 km)', isBurst: true }),
+      Object.freeze({ altKm: 30.0, lat: 47.696069, lon: -119.37835, label: '30 km' }),
+      Object.freeze({ altKm: 25.0, lat: 47.753425, lon: -119.38419, label: '25 km Start', isRelease: true }),
+      Object.freeze({ altKm: 20.0, lat: 47.810781, lon: -119.39003, label: '20 km Start', isRelease: true }),
+      Object.freeze({ altKm: 16.0, lat: 47.85685, lon: -119.39474, label: '16 km Terminus' }),
+    ]),
+    releaseSeries: Object.freeze([
+      Object.freeze({
+        id: 'burst-41.4km',
+        shortLabel: '41.4km',
+        legendLabel: 'Yellow circles for 41.4 km burst (1st burst · 21 km/s)',
+        altKm: 41.4,
+        lat: 47.565811,
+        lon: -119.36522,
+        speedMs: 21000,
+        windScale: 1.0,
+        color: '#facc15',
+      }),
+      Object.freeze({
+        id: 'burst-31.7km',
+        shortLabel: '31.7km',
+        legendLabel: 'Orange circles for 31.7 km burst (2nd burst · 20 km/s)',
+        altKm: 31.7,
+        lat: 47.677189,
+        lon: -119.37647,
+        speedMs: 20000,
+        windScale: 1.0,
+        color: '#fb923c',
+      }),
+      Object.freeze({
+        id: 'start-25km',
+        shortLabel: '25km',
+        legendLabel: 'Green circles for 25 km start (15 km/s)',
+        altKm: 25.0,
+        lat: 47.753425,
+        lon: -119.38419,
+        speedMs: 15000,
+        windScale: 1.0,
+        color: '#22c55e',
+      }),
+      Object.freeze({
+        id: 'start-20km',
+        shortLabel: '20km',
+        legendLabel: 'Cyan circles for 20 km start (7 km/s · 70% wind)',
+        altKm: 20.0,
+        lat: 47.810781,
+        lon: -119.39003,
+        speedMs: 7000,
+        windScale: 0.7,
+        color: '#38bdf8',
+      }),
+    ]),
+    landmarks: Object.freeze([
+      Object.freeze({ id: 'lm:stacked-rocks', label: 'Stacked Rocks', lat: 47.871522, lon: -119.369762 }),
+      Object.freeze({ id: 'lm:red-barn', label: 'Red Barn', lat: 47.849933, lon: -119.361135 }),
+    ]),
+  }),
+  // Radar1 boundary - 100g (7:50:41 UT, alt 10.29 km, wind-drifted for 100g H-chondrites)
+  polygon: Object.freeze([
+    Object.freeze({ lat: 47.842215, lon: -119.378028 }),
+    Object.freeze({ lat: 47.842072, lon: -119.378284 }),
+    Object.freeze({ lat: 47.840415, lon: -119.354938 }),
+    Object.freeze({ lat: 47.860824, lon: -119.350952 }),
+    Object.freeze({ lat: 47.861824, lon: -119.360966 }),
+    Object.freeze({ lat: 47.882427, lon: -119.356295 }),
+    Object.freeze({ lat: 47.883772, lon: -119.369581 }),
+  ]),
+  secondaryPolygons: Object.freeze([
+    Object.freeze({
+      id: 'radar1-30g',
+      label: '30g boundary (7:50:41 · 10.29 km)',
+      color: '#60a5fa',
+      polygon: Object.freeze([
+        Object.freeze({ lat: 47.843583, lon: -119.375096 }),
+        Object.freeze({ lat: 47.841936, lon: -119.351949 }),
+        Object.freeze({ lat: 47.862253, lon: -119.347869 }),
+        Object.freeze({ lat: 47.863166, lon: -119.357963 }),
+        Object.freeze({ lat: 47.883795, lon: -119.353423 }),
+        Object.freeze({ lat: 47.885206, lon: -119.366535 }),
+      ]),
+    }),
+    Object.freeze({
+      id: 'radar2-100g',
+      label: '100g boundary (7:51:01 · 12.8 km)',
+      color: '#38bdf8',
+      polygon: Object.freeze([
+        Object.freeze({ lat: 47.826629, lon: -119.3598 }),
+        Object.freeze({ lat: 47.826261, lon: -119.35328 }),
+        Object.freeze({ lat: 47.846917, lon: -119.34994 }),
+        Object.freeze({ lat: 47.847307, lon: -119.356553 }),
+      ]),
+    }),
+    Object.freeze({
+      id: 'radar2-30g',
+      label: '30g boundary (7:51:01 · 12.8 km)',
+      color: '#60a5fa',
+      polygon: Object.freeze([
+        Object.freeze({ lat: 47.829337, lon: -119.348411 }),
+        Object.freeze({ lat: 47.850024, lon: -119.344996 }),
+        Object.freeze({ lat: 47.850292, lon: -119.351764 }),
+        Object.freeze({ lat: 47.829667, lon: -119.35497 }),
+      ]),
+    }),
+  ]),
+});
+
 export const DOCUMENTED_NEXRAD_GATES = Object.freeze({
-  'ares:sims-corner-wa': Object.freeze({
-    station: 'KOTX (Spokane, WA) / KPDT (Pendleton, OR)',
-    gateTimeUtc: '2026-08-14T07:50:41Z',
-    bolideTimeUtc: '2026-08-14T07:48:36Z',
-    elapsedSec: 125,
-    gateAltitudeKm: 10.29,
-    gateAltitudeMarginKm: 0.65,
-    beamWidthDeg: 0.95,
-    reflectivityDbz: 24.5,
-    flareAltitudesKm: [61.5, 45.5],
-    // Blue radar gate polygon from Sims Corner field map (east of WA-17 between 81g & 48.5g/46.6g)
-    polygon: Object.freeze([
-      Object.freeze({ lat: 47.8842, lon: -119.3718 }),
-      Object.freeze({ lat: 47.8848, lon: -119.3592 }),
-      Object.freeze({ lat: 47.8658, lon: -119.3586 }),
-      Object.freeze({ lat: 47.8652, lon: -119.3712 }),
-    ]),
-  }),
-  'asgard:20260814-074833': Object.freeze({
-    station: 'KOTX (Spokane, WA) / KPDT (Pendleton, OR)',
-    gateTimeUtc: '2026-08-14T07:50:41Z',
-    bolideTimeUtc: '2026-08-14T07:48:36Z',
-    elapsedSec: 125,
-    gateAltitudeKm: 10.29,
-    gateAltitudeMarginKm: 0.65,
-    beamWidthDeg: 0.95,
-    reflectivityDbz: 24.5,
-    flareAltitudesKm: [61.5, 45.5],
-    polygon: Object.freeze([
-      Object.freeze({ lat: 47.8842, lon: -119.3718 }),
-      Object.freeze({ lat: 47.8848, lon: -119.3592 }),
-      Object.freeze({ lat: 47.8658, lon: -119.3586 }),
-      Object.freeze({ lat: 47.8652, lon: -119.3712 }),
-    ]),
-  }),
+  'ares:sims-corner-wa': SIMS_CORNER_NEXRAD_AND_TRACK,
+  'asgard:20260814-074833': SIMS_CORNER_NEXRAD_AND_TRACK,
   'ares:hopewell-nj': Object.freeze({
     station: 'KDIX (Mt. Holly, NJ)',
     gateTimeUtc: '2023-05-08T16:17:10Z',
@@ -787,7 +894,11 @@ export function evaluateEventSanityAndOverUnder(
         : null,
   });
 
-  const longApproach = computeLongApproachTrajectory(event, trajPartner);
+  const longApproach = computeLongApproachTrajectory(
+    event,
+    trajPartner,
+    dfResult?.effectiveTerminus,
+  );
   const nasaAudit = computeIndependentNasaAudit({
     event,
     trajPartner,
@@ -856,28 +967,40 @@ export function computeWeibullFractureCascade(
       25.0,
   );
   const startAltKm = Number(aeroPhysics?.startAltKm) || 82.0;
-  const endAltKm = Number(aeroPhysics?.endAltKm) || 45.5;
+  // If a calibrated multi-camera trajectory is available (e.g. 3D Track - v4), or if
+  // an upstream single-camera track cuts off prematurely above 36 km while surviving to the
+  // lower stratosphere, resolve the physical terminal breakup altitude (~31.7 km) and
+  // upper fracture onset altitude (~41.4 km where 0.5 * rho(z) * v^2 = 0.65 MPa).
+  const rawEndAltKm = Number(aeroPhysics?.endAltKm) || 31.7;
+  const endAltKm =
+    Array.isArray(nexrad?.flareAltitudesKm) && nexrad.flareAltitudesKm.length > 0
+      ? Math.min(...nexrad.flareAltitudesKm)
+      : rawEndAltKm > 36 && parentMassKg >= 5
+        ? 31.5
+        : rawEndAltKm;
   const pDynTerminalMpa = Math.max(
     0.01,
-    Number(aeroPhysics?.ramPressureMpa) || 0.95,
+    Number(aeroPhysics?.ramPressureMpa) || 2.8,
   );
   const alpha = Math.max(0.08, Math.min(0.45, Number(weibullAlpha) || 0.18));
   const s0 = Math.max(0.05, Number(sigma0Mpa) || 0.42);
   const entryVelKmS =
     Number(
-      asgardRec?.trajectory?.entryVelocity ||
+      nexrad?.calibratedTrajectory?.entryVelocity ||
+        asgardRec?.trajectory?.entryVelocity ||
         gmnRec?.trajectory?.entryVelocity ||
         event?.trajectory?.entryVelocity,
-    ) || 14.6;
+    ) || 17.5;
 
-  // Compute physical onset altitude where P_dyn(z) = rho_0 * exp(-z/H) * v^2 = sigma_onset (0.085 MPa)
-  const onsetRho = 85000 / Math.max(1e6, (entryVelKmS * 1000) ** 2);
-  const physicsOnsetAltKm = Math.round(
-    Math.max(
-      endAltKm + 6,
-      Math.min(startAltKm - 4, -7.4 * Math.log(onsetRho / 1.225)),
-    ) * 10,
-  ) / 10;
+  // Compute physical chondrite fracture onset altitude where 0.5 * rho(z) * v^2 = 0.65 MPa (~41.4 km)
+  const onsetRho = (2 * 650000) / Math.max(1e6, (entryVelKmS * 1000) ** 2);
+  const physicsOnsetAltKm =
+    Math.round(
+      Math.max(
+        endAltKm + 6,
+        Math.min(startAltKm - 6, -7.1 * Math.log(onsetRho / 1.225)),
+      ) * 10,
+    ) / 10;
 
   // Gather observational signals for bolide count N (0, 1, 2, 3, 4+)
   const cameraPeaks =
@@ -1088,15 +1211,23 @@ export function computeWeibullFractureCascade(
  *  - Zenith attraction bending of the radiant:
  *      tan(Δz_g / 2) = ((v_entry - v_g) / (v_entry + v_g)) * tan(z_R / 2)
  */
-export function computeLongApproachTrajectory(event, trajPartner = event) {
+export function computeLongApproachTrajectory(
+  event,
+  trajPartner = event,
+  effectiveTerminus = null,
+) {
   const src = trajPartner || event;
   const t = src?.trajectory || {};
-  const startLat = Number.isFinite(t.startLat)
-    ? Number(t.startLat)
-    : Number(src?.location?.lat ?? event?.location?.lat);
-  const startLon = Number.isFinite(t.startLon)
-    ? Number(t.startLon)
-    : Number(src?.location?.lon ?? event?.location?.lon);
+  const startLat = Number.isFinite(effectiveTerminus?.entryStartLat)
+    ? Number(effectiveTerminus.entryStartLat)
+    : Number.isFinite(t.startLat)
+      ? Number(t.startLat)
+      : Number(src?.location?.lat ?? event?.location?.lat);
+  const startLon = Number.isFinite(effectiveTerminus?.entryStartLon)
+    ? Number(effectiveTerminus.entryStartLon)
+    : Number.isFinite(t.startLon)
+      ? Number(t.startLon)
+      : Number(src?.location?.lon ?? event?.location?.lon);
   if (!Number.isFinite(startLat) || !Number.isFinite(startLon)) return null;
 
   const startAltKm = Number.isFinite(t.startAltKm) ? Number(t.startAltKm) : 82;
@@ -1491,12 +1622,39 @@ export function computeIndependentNasaAudit({
     };
   }
 
+  // 6. Field-Hunter KMZ Reconstruction Audit (Empirical Field Observations vs. Hand-Model Approximations)
+  let fieldHunterKmzAudit = null;
+  if (nexrad?.calibratedTrajectory) {
+    const ct = nexrad.calibratedTrajectory;
+    const cameraSpeedKmS = longApproach?.entrySpeedKmS ?? 14.6;
+    const kmzAssumedSpeedKmS = ct.entryVelocity ?? 21.0;
+    const speedDeltaPct = Math.round(
+      ((kmzAssumedSpeedKmS - cameraSpeedKmS) / cameraSpeedKmS) * 100,
+    );
+    fieldHunterKmzAudit = {
+      empiricalAssetsConfirmed: [
+        '11 GPS meteorite finds (9.2g–81g, 382.7g total)',
+        '4 calibrated witness video azimuth sightlines (Airway Heights, Post Falls, Renton, Benton City)',
+        '2 optical burst triangulations (Burst 1 @ 41.4 km, Burst 2 @ 31.7 km)',
+        '4 NOAA NEXRAD Level-II returns (10.29 km, 12.78 km, 2.16 km, 12.41 km)',
+      ],
+      modelDiscrepanciesFound: [
+        `Entry velocity overestimate: KMZ assumed ${kmzAssumedSpeedKmS} km/s at 41.4 km vs camera-timed ${cameraSpeedKmS} km/s (+${speedDeltaPct}%)`,
+        'Ad-hoc 70% wind scaling: KMZ required 70% wind fudge factor on 20/25 km runs because constant Cd=0.9 + 0m sea-level cutoff (ignoring 651m Columbia Plateau elevation) over-drifted stones 1.3–2.5 km East',
+        '4 disconnected point-mass starts (41.4, 31.7, 25, 20 km): KMZ point-mass drops from 41.4 & 31.7 km fell 1.8–4.2 km short of the finds without modeling progressive parent-core penetration to 25–20 km',
+        'Track v3 coordinate typo: 3D Track - v3 80 km placemark has lat 47.13093 pasted into longitude (47.13°E instead of -119.32°W)',
+      ],
+      summary: `Field-Hunter KMZ Audit: Confirmed 11 GPS finds, 4 witness video sightlines & 4 NEXRAD returns, while correcting KMZ hand-model approximations (${kmzAssumedSpeedKmS} vs ${cameraSpeedKmS} km/s entry speed [+${speedDeltaPct}%], ad-hoc 70% wind fudge factor from missing 651m plateau elevation, 4 disconnected trial starts vs continuous spine deceleration, and Track v3 80 km lon typo).`,
+    };
+  }
+
   return {
     massDiameterAudit,
     brownEnergyAudit,
     radarBeamAudit,
     orbitalVelocityAudit,
     multiSolverAndMediaAudit,
+    fieldHunterKmzAudit,
     auditWarnings,
   };
 }

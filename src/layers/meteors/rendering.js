@@ -307,6 +307,12 @@ export function createRendering({ layerState, services, components, config }) {
       }
     }
     layerState._darkFlightEntities = [];
+    if (Array.isArray(layerState._hiddenByDarkFlight)) {
+      for (const ent of layerState._hiddenByDarkFlight) {
+        ent.show = true;
+      }
+      layerState._hiddenByDarkFlight = [];
+    }
   }
 
   function renderDarkFlight() {
@@ -324,6 +330,25 @@ export function createRendering({ layerState, services, components, config }) {
     const df = layerState._darkFlightResult;
     const mode = layerState._darkFlightMode || 'all';
     const isZone = df.regime === 'zone-of-possibility';
+
+    // Hide duplicate uncalibrated partner sky vectors/tethers while calibrated Dark Flight
+    // spine is active so there are never two competing entry trajectory arrows in the sky.
+    const selEvForHide = layerState._events.find((e) => e.id === df.eventId);
+    const partnerIdsToHide = new Set([
+      df.eventId,
+      df.borrowedFromPartner,
+      ...(selEvForHide?.possibleMatches || []).map((m) => m.id),
+    ].filter(Boolean));
+    layerState._hiddenByDarkFlight = [];
+    for (const pid of partnerIdsToHide) {
+      for (const suffix of [':vector', ':tether']) {
+        const ent = layerState._dataSource.entities.getById(`${pid}${suffix}`);
+        if (ent && ent.show !== false) {
+          ent.show = false;
+          layerState._hiddenByDarkFlight.push(ent);
+        }
+      }
+    }
 
     // 1. Render 2σ Outer Ellipse and 1σ Inner Core Ellipse (draped onto 3D Tiles & terrain)
     if (mode === 'all' || mode === 'montecarlo') {
@@ -484,11 +509,12 @@ export function createRendering({ layerState, services, components, config }) {
             );
           }
 
-          // Also render secondary mass-sweep pins & 3D tracks for each Sub-Bolide's
-          // complementary masses (e.g. F1's larger 300g/100g/50g pieces and F2's smaller 30g/10g/3g pieces)
+          // Render ground-only secondary mass-sweep pins for each Sub-Bolide's
+          // complementary masses only when releaseSeriesSweeps is not already rendering them
           if (
             (mode === 'all' || mode === 'sweep') &&
-            Array.isArray(sb.massSweep)
+            Array.isArray(sb.massSweep) &&
+            !(Array.isArray(df.releaseSeriesSweeps) && df.releaseSeriesSweeps.length > 0)
           ) {
             for (const sbBand of sb.massSweep) {
               const isPrimaryBand = (df.massSweep || []).some(
@@ -497,24 +523,6 @@ export function createRendering({ layerState, services, components, config }) {
               );
               if (isPrimaryBand) continue;
               const bColor = Cesium.Color.fromCssColorString(sbBand.color);
-              if (Array.isArray(sbBand.track) && sbBand.track.length > 1) {
-                layerState._darkFlightEntities.push(
-                  layerState._dataSource.entities.add({
-                    id: `df:${df.eventId}:subtrack:${sb.id}:${sbBand.label}`,
-                    polyline: {
-                      positions: sbBand.track.map((pt) =>
-                        Cesium.Cartesian3.fromDegrees(pt.lon, pt.lat, pt.altM),
-                      ),
-                      width: 1.5,
-                      material: new Cesium.PolylineDashMaterialProperty({
-                        color: bColor.withAlpha(0.65),
-                        dashLength: 10,
-                      }),
-                      arcType: Cesium.ArcType.NONE,
-                    },
-                  }),
-                );
-              }
               layerState._darkFlightEntities.push(
                 layerState._dataSource.entities.add({
                   id: `df:${df.eventId}:submass:${sb.id}:${sbBand.label}`,
@@ -630,10 +638,59 @@ export function createRendering({ layerState, services, components, config }) {
             },
           });
           layerState._darkFlightEntities.push(trackEnt);
+
+          // Render the 3D Retardation Knee node where this mass decelerates below Mach 1
+          // on the 3D trajectory spine and peels off Eastward into subsonic dark flight
+          if (band.retardationKnee && Number.isFinite(band.retardationKnee.lat)) {
+            const rk = band.retardationKnee;
+            const showKneeLabel =
+              (layerState._groundLabelsMode || 'compact') === 'compact' &&
+              (band.massKg === 1.0 || band.massKg === 0.1 || band.massKg === 0.03 || band.massKg === 0.003);
+            layerState._darkFlightEntities.push(
+              layerState._dataSource.entities.add({
+                id: `df:${df.eventId}:knee:${band.label}`,
+                position: Cesium.Cartesian3.fromDegrees(
+                  rk.lon,
+                  rk.lat,
+                  rk.altKm * 1000,
+                ),
+                point: {
+                  pixelSize: 6,
+                  color: bandColor,
+                  outlineColor: Cesium.Color.BLACK,
+                  outlineWidth: 1.5,
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                },
+                label: showKneeLabel
+                  ? {
+                      text: `${band.label} knee (${rk.altKm} km)`,
+                      font: '600 9px ui-monospace, SFMono-Regular, Menlo, monospace',
+                      fillColor: bandColor,
+                      outlineColor: Cesium.Color.BLACK,
+                      outlineWidth: 2,
+                      style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                      showBackground: true,
+                      backgroundColor: new Cesium.Color(0.03, 0.05, 0.09, 0.68),
+                      backgroundPadding: new Cesium.Cartesian2(4, 1.5),
+                      horizontalOrigin: Cesium.HorizontalOrigin.RIGHT,
+                      verticalOrigin: Cesium.VerticalOrigin.CENTER,
+                      pixelOffset: new Cesium.Cartesian2(-8, 0),
+                      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                      scaleByDistance: new Cesium.NearFarScalar(5000, 1.0, 140000, 0.45),
+                    }
+                  : undefined,
+              }),
+            );
+          }
         }
 
-        // Per-mass ground 1σ margin-of-error ring + cross-track error bar
-        if (band.marginRadiusM && band.underPoint && band.overPoint) {
+        // Per-mass ground 1σ margin-of-error ring + cross-track error bar (only when multi-series circles are not active)
+        if (
+          band.marginRadiusM &&
+          band.underPoint &&
+          band.overPoint &&
+          !(Array.isArray(df.releaseSeriesSweeps) && df.releaseSeriesSweeps.length > 0)
+        ) {
           const errBarEnt = layerState._dataSource.entities.add({
             id: `df:${df.eventId}:errbar:${band.label}`,
             polyline: {
@@ -743,22 +800,8 @@ export function createRendering({ layerState, services, components, config }) {
         });
         layerState._darkFlightEntities.push(underRail);
       }
-      if (overRailPositions.length >= 2) {
-        const overRail = layerState._dataSource.entities.add({
-          id: `df:${df.eventId}:spine-over`,
-          polyline: {
-            positions: overRailPositions,
-            width: 1.8,
-            material: new Cesium.PolylineDashMaterialProperty({
-              color: Cesium.Color.fromCssColorString('#fb7185').withAlpha(0.8),
-              dashLength: 10,
-            }),
-            clampToGround: true,
-            classificationType: Cesium.ClassificationType.BOTH,
-          },
-        });
-        layerState._darkFlightEntities.push(overRail);
-      }
+      // Note: Do not render the 28 extra multi-trial KMZ series circles on the ground by default;
+      // the unified 7-mass dark-flight spine (1kg..3g) already renders the physical ground mass line.
     }
 
     // 2b. Render 3D Double-Ended Cones of Uncertainty (Biconical / Hourglass 3D Error Volume)
@@ -773,12 +816,183 @@ export function createRendering({ layerState, services, components, config }) {
       const trajEvent =
         layerState._events.find((e) => e.id === conesSpec.sourceId) || selEvent;
       const trajGeom = trajEvent ? computeEventGeometry(trajEvent, Cesium) : null;
-      if (
-        trajGeom?.entryTrackPositions &&
-        trajGeom.entryTrackPositions.length >= 2
-      ) {
-        const startPos = trajGeom.entryTrackPositions[0];
-        const endPos = trajGeom.entryTrackPositions[1];
+      const effT = df.effectiveTerminus;
+      const hasCalibratedSpine =
+        effT &&
+        Number.isFinite(effT.entryStartLat) &&
+        Number.isFinite(effT.entryStartLon) &&
+        Number.isFinite(effT.lat) &&
+        Number.isFinite(effT.lon);
+      const startPos = hasCalibratedSpine
+        ? Cesium.Cartesian3.fromDegrees(
+            effT.entryStartLon,
+            effT.entryStartLat,
+            (effT.entryStartAltKm || 77.9) * 1000,
+          )
+        : trajGeom?.entryTrackPositions?.[0];
+      const endPos = hasCalibratedSpine
+        ? Cesium.Cartesian3.fromDegrees(
+            effT.lon,
+            effT.lat,
+            (effT.altKm || 45.5) * 1000,
+          )
+        : trajGeom?.entryTrackPositions?.[1];
+
+      if (startPos && endPos) {
+        // Render the unified 3D Luminous Entry Spine connecting startPos -> endPos
+        // so the entry arrow, Sub-Bolide F1..FN markers, 3D cones, and Dark-Flight
+        // mass projection curves meet at a single continuous 3D spine with zero gap.
+        layerState._darkFlightEntities.push(
+          layerState._dataSource.entities.add({
+            id: `df:${df.eventId}:calibrated-entry-spine`,
+            polyline: {
+              positions: [startPos, endPos],
+              width: 9,
+              material: new Cesium.PolylineArrowMaterialProperty(
+                Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.95),
+              ),
+              arcType: Cesium.ArcType.NONE,
+            },
+          }),
+        );
+        // Render altitude waypoints & ground extrusion tethers along calibratedTrajectory when present
+        const calWps = df.validation?.nexrad?.calibratedTrajectory?.waypoints;
+        if (Array.isArray(calWps) && calWps.length >= 2) {
+          const groundTrackPositions = calWps.map((wp) =>
+            Cesium.Cartesian3.fromDegrees(wp.lon, wp.lat, 0),
+          );
+          layerState._darkFlightEntities.push(
+            layerState._dataSource.entities.add({
+              id: `df:${df.eventId}:calibrated-ground-track`,
+              polyline: {
+                positions: groundTrackPositions,
+                width: 2.2,
+                material: Cesium.Color.fromCssColorString('#ef4444').withAlpha(0.85),
+                clampToGround: true,
+                classificationType: Cesium.ClassificationType.BOTH,
+              },
+            }),
+          );
+          for (const wp of calWps) {
+            if (wp.isBurst) continue; // Burst 1 (41.4 km) and Burst 2 (31.7 km) already rendered by subBolides
+            const wpColor = wp.isRelease
+              ? Cesium.Color.fromCssColorString('#22c55e')
+              : Cesium.Color.fromCssColorString('#38bdf8');
+            layerState._darkFlightEntities.push(
+              layerState._dataSource.entities.add({
+                id: `df:${df.eventId}:wp:${wp.altKm}`,
+                position: Cesium.Cartesian3.fromDegrees(
+                  wp.lon,
+                  wp.lat,
+                  wp.altKm * 1000,
+                ),
+                point: {
+                  pixelSize: wp.isRelease ? 7.5 : 5,
+                  color: wpColor,
+                  outlineColor: Cesium.Color.BLACK,
+                  outlineWidth: 1.5,
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                },
+                label:
+                  (layerState._groundLabelsMode || 'compact') !== 'hidden' &&
+                  (wp.isRelease || wp.altKm === 16 || wp.altKm === 60 || wp.altKm === 100)
+                    ? {
+                        text: wp.label,
+                        font: '600 9px ui-monospace, SFMono-Regular, Menlo, monospace',
+                        fillColor: wpColor,
+                        outlineColor: Cesium.Color.BLACK,
+                        outlineWidth: 2,
+                        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                        showBackground: true,
+                        backgroundColor: new Cesium.Color(0.03, 0.05, 0.09, 0.68),
+                        backgroundPadding: new Cesium.Cartesian2(4, 1.5),
+                        horizontalOrigin: Cesium.HorizontalOrigin.RIGHT,
+                        verticalOrigin: Cesium.VerticalOrigin.CENTER,
+                        pixelOffset: new Cesium.Cartesian2(-8, 0),
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        scaleByDistance: new Cesium.NearFarScalar(5000, 1.0, 180000, 0.45),
+                      }
+                    : undefined,
+              }),
+              layerState._dataSource.entities.add({
+                id: `df:${df.eventId}:wp-tether:${wp.altKm}`,
+                polyline: {
+                  positions: [
+                    Cesium.Cartesian3.fromDegrees(wp.lon, wp.lat, 0),
+                    Cesium.Cartesian3.fromDegrees(wp.lon, wp.lat, wp.altKm * 1000),
+                  ],
+                  width: 1.0,
+                  material: new Cesium.PolylineDashMaterialProperty({
+                    color: wpColor.withAlpha(0.35),
+                    dashLength: 8,
+                  }),
+                  arcType: Cesium.ArcType.NONE,
+                },
+              }),
+            );
+          }
+        }
+
+        // Render Secondary NEXRAD Radar Boundary Polygons (30g boundary, Radar2 12.8km boundaries) & Landmarks
+        const secPolys = df.validation?.nexrad?.secondaryPolygons;
+        if (Array.isArray(secPolys)) {
+          for (const sp of secPolys) {
+            if (!Array.isArray(sp.polygon) || sp.polygon.length < 3) continue;
+            const spColor = Cesium.Color.fromCssColorString(sp.color || '#60a5fa');
+            const spLoop = [...sp.polygon, sp.polygon[0]].map((p) =>
+              Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0),
+            );
+            layerState._darkFlightEntities.push(
+              layerState._dataSource.entities.add({
+                id: `df:${df.eventId}:nexrad:sec:${sp.id}`,
+                polyline: {
+                  positions: spLoop,
+                  width: 2.0,
+                  material: spColor.withAlpha(0.85),
+                  clampToGround: true,
+                  classificationType: Cesium.ClassificationType.BOTH,
+                },
+              }),
+            );
+          }
+        }
+        const landmarks = df.validation?.nexrad?.calibratedTrajectory?.landmarks;
+        if (Array.isArray(landmarks)) {
+          for (const lm of landmarks) {
+            layerState._darkFlightEntities.push(
+              layerState._dataSource.entities.add({
+                id: `df:${df.eventId}:${lm.id}`,
+                position: Cesium.Cartesian3.fromDegrees(lm.lon, lm.lat, 0),
+                point: {
+                  pixelSize: 6.5,
+                  color: Cesium.Color.WHITE,
+                  outlineColor: Cesium.Color.BLACK,
+                  outlineWidth: 1.5,
+                  heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                },
+                label:
+                  (layerState._groundLabelsMode || 'compact') === 'compact'
+                    ? {
+                        text: lm.label,
+                        font: '600 9px ui-monospace, SFMono-Regular, Menlo, monospace',
+                        fillColor: Cesium.Color.WHITE,
+                        outlineColor: Cesium.Color.BLACK,
+                        outlineWidth: 2,
+                        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                        showBackground: true,
+                        backgroundColor: new Cesium.Color(0.05, 0.05, 0.08, 0.7),
+                        backgroundPadding: new Cesium.Cartesian2(4, 1.5),
+                        pixelOffset: new Cesium.Cartesian2(0, -12),
+                        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        scaleByDistance: new Cesium.NearFarScalar(2000, 1.0, 60000, 0.45),
+                      }
+                    : undefined,
+              }),
+            );
+          }
+        }
         const axis = Cesium.Cartesian3.subtract(
           endPos,
           startPos,
@@ -915,7 +1129,7 @@ export function createRendering({ layerState, services, components, config }) {
       }
     }
 
-    // 2c. Render NOAA NEXRAD Doppler Weather Radar Gate (3D 10.29km slice + Ground Polygon)
+    // 2c. Render NOAA NEXRAD Doppler Weather Radar Gate (Ground Boundary Polygon + 10.29km Sky Return Point)
     const nexrad = df.validation?.nexrad;
     if (nexrad && Array.isArray(nexrad.polygon) && nexrad.polygon.length >= 3) {
       const radarColor = Cesium.Color.fromCssColorString('#38bdf8');
@@ -923,56 +1137,60 @@ export function createRendering({ layerState, services, components, config }) {
       const groundLoop = [...nexrad.polygon, nexrad.polygon[0]].map((p) =>
         Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0),
       );
-      const airLoop = [...nexrad.polygon, nexrad.polygon[0]].map((p) =>
-        Cesium.Cartesian3.fromDegrees(p.lon, p.lat, gateAltM),
-      );
 
-      // Ground projection of NEXRAD radar gate
+      // Ground projection of NEXRAD wind-drifted radar boundary (100g boundary)
       layerState._darkFlightEntities.push(
         layerState._dataSource.entities.add({
           id: `df:${df.eventId}:nexrad:ground-outline`,
           polyline: {
             positions: groundLoop,
-            width: 2.5,
-            material: radarColor.withAlpha(0.9),
+            width: 2.4,
+            material: radarColor.withAlpha(0.92),
             clampToGround: true,
             classificationType: Cesium.ClassificationType.BOTH,
           },
         }),
       );
-      // 3D radar beam slice at gateAltitudeKm (e.g. 10.29 km)
+
+      // 3D Sky Radar Return Point at gateAltitudeKm (e.g. 7:50:41 UT @ 10.29 km under the sky spine)
+      const skyLat = Number.isFinite(nexrad.skyReturnLat)
+        ? nexrad.skyReturnLat
+        : nexrad.polygon.reduce((s, p) => s + p.lat, 0) / nexrad.polygon.length;
+      const skyLon = Number.isFinite(nexrad.skyReturnLon)
+        ? nexrad.skyReturnLon
+        : nexrad.polygon.reduce((s, p) => s + p.lon, 0) / nexrad.polygon.length;
       layerState._darkFlightEntities.push(
         layerState._dataSource.entities.add({
-          id: `df:${df.eventId}:nexrad:air-slice`,
-          polyline: {
-            positions: airLoop,
-            width: 2.5,
-            material: radarColor.withAlpha(0.95),
-            arcType: Cesium.ArcType.NONE,
+          id: `df:${df.eventId}:nexrad:sky-return`,
+          position: Cesium.Cartesian3.fromDegrees(skyLon, skyLat, gateAltM),
+          point: {
+            pixelSize: 8,
+            color: radarColor,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
+          label:
+            (layerState._groundLabelsMode || 'compact') !== 'hidden'
+              ? {
+                  text: `📡 ${nexrad.gateTimeUtc?.slice(11, 19) || 'NEXRAD'} - ${nexrad.gateAltitudeKm} km`,
+                  font: '600 9.5px ui-monospace, SFMono-Regular, Menlo, monospace',
+                  fillColor: radarColor,
+                  outlineColor: Cesium.Color.BLACK,
+                  outlineWidth: 2,
+                  style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                  showBackground: true,
+                  backgroundColor: new Cesium.Color(0.02, 0.06, 0.12, 0.75),
+                  backgroundPadding: new Cesium.Cartesian2(5, 2),
+                  horizontalOrigin: Cesium.HorizontalOrigin.RIGHT,
+                  verticalOrigin: Cesium.VerticalOrigin.CENTER,
+                  pixelOffset: new Cesium.Cartesian2(-10, 0),
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                  scaleByDistance: new Cesium.NearFarScalar(5000, 1.0, 140000, 0.45),
+                }
+              : undefined,
         }),
       );
-      // Vertical corner tethers from 10.29 km radar slice to ground
-      for (let idx = 0; idx < nexrad.polygon.length; idx++) {
-        const p = nexrad.polygon[idx];
-        layerState._darkFlightEntities.push(
-          layerState._dataSource.entities.add({
-            id: `df:${df.eventId}:nexrad:pillar:${idx}`,
-            polyline: {
-              positions: [
-                Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0),
-                Cesium.Cartesian3.fromDegrees(p.lon, p.lat, gateAltM),
-              ],
-              width: 1.2,
-              material: new Cesium.PolylineDashMaterialProperty({
-                color: radarColor.withAlpha(0.55),
-                dashLength: 10,
-              }),
-              arcType: Cesium.ArcType.NONE,
-            },
-          }),
-        );
-      }
     }
 
     // 2d. Render GOES GLM 14km-Ellipsoid Parallax Ghost & Correction Vector (when significant)
@@ -1029,12 +1247,17 @@ export function createRendering({ layerState, services, components, config }) {
     const showCompactStoneLabels =
       (layerState._groundLabelsMode || 'compact') === 'compact';
     const stoneOffsets = [
-      new Cesium.Cartesian2(10, -8),
-      new Cesium.Cartesian2(10, 8),
-      new Cesium.Cartesian2(-10, -8),
-      new Cesium.Cartesian2(10, 12),
-      new Cesium.Cartesian2(-10, 0),
-      new Cesium.Cartesian2(10, -10),
+      new Cesium.Cartesian2(12, -10),
+      new Cesium.Cartesian2(12, 10),
+      new Cesium.Cartesian2(-12, -10),
+      new Cesium.Cartesian2(-12, 10),
+      new Cesium.Cartesian2(14, 0),
+      new Cesium.Cartesian2(-14, 0),
+      new Cesium.Cartesian2(12, -22),
+      new Cesium.Cartesian2(12, 22),
+      new Cesium.Cartesian2(-12, -22),
+      new Cesium.Cartesian2(-12, 22),
+      new Cesium.Cartesian2(0, 18),
     ];
 
     for (let sIdx = 0; sIdx < stoneComparisons.length; sIdx++) {
@@ -1105,31 +1328,6 @@ export function createRendering({ layerState, services, components, config }) {
           },
         });
         layerState._darkFlightEntities.push(resLine);
-
-        // If this stone detached from Episode F1 (Upper Flare), also render its
-        // 3D upper-flare dark-flight trajectory curve in dashed cyan-green
-        if (
-          isF1 &&
-          (mode === 'all' || mode === 'sweep') &&
-          Array.isArray(simulated.track) &&
-          simulated.track.length > 1
-        ) {
-          const f1TrackEnt = layerState._dataSource.entities.add({
-            id: `df:${df.eventId}:f1track:${stone.id}`,
-            polyline: {
-              positions: simulated.track.map((pt) =>
-                Cesium.Cartesian3.fromDegrees(pt.lon, pt.lat, pt.altM),
-              ),
-              width: 1.8,
-              material: new Cesium.PolylineDashMaterialProperty({
-                color: Cesium.Color.fromCssColorString('#34d399').withAlpha(0.7),
-                dashLength: 12,
-              }),
-              arcType: Cesium.ArcType.NONE,
-            },
-          });
-          layerState._darkFlightEntities.push(f1TrackEnt);
-        }
       }
     }
 
@@ -1192,42 +1390,6 @@ export function createRendering({ layerState, services, components, config }) {
         });
         layerState._darkFlightEntities.push(entry120Ent);
       }
-    }
-
-    // 8. Render Secondary Trajectory (e.g. AMS Eyewitness Trajectory) & Sightline Rays when retrieved
-    const multiAudit = df.validation?.nasaAudit?.multiSolverAndMediaAudit;
-    const secTraj = multiAudit?.secondaryTrajectory;
-    if (
-      secTraj &&
-      Number.isFinite(secTraj.startLat) &&
-      Number.isFinite(secTraj.endLat)
-    ) {
-      const secStartAltM = (Number(secTraj.startAltKm) || 80) * 1000;
-      const secEndAltM = (Number(secTraj.endAltKm) || 28.7) * 1000;
-      const secLineEnt = layerState._dataSource.entities.add({
-        id: `df:${df.eventId}:secondary-traj`,
-        polyline: {
-          positions: [
-            Cesium.Cartesian3.fromDegrees(
-              secTraj.startLon,
-              secTraj.startLat,
-              secStartAltM,
-            ),
-            Cesium.Cartesian3.fromDegrees(
-              secTraj.endLon,
-              secTraj.endLat,
-              secEndAltM,
-            ),
-          ],
-          width: 2.2,
-          material: new Cesium.PolylineDashMaterialProperty({
-            color: Cesium.Color.fromCssColorString('#f97316').withAlpha(0.82),
-            dashLength: 10,
-          }),
-          arcType: Cesium.ArcType.NONE,
-        },
-      });
-      layerState._darkFlightEntities.push(secLineEnt);
     }
 
     publishOverlayCards();

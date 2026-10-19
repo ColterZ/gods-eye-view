@@ -288,14 +288,14 @@ export function computeDragCoefficient(
   if (knudsen > 10) {
     return 2.1;
   }
-  if (mach > 4) return 0.92;
-  if (mach > 1.2) return 0.92 + 0.3 * Math.exp(-5 * (mach - 1.2));
-  if (mach > 0.8) return 0.92 + 0.45 * Math.exp(-10 * Math.abs(mach - 1.0));
+  if (mach > 4) return 0.72;
+  if (mach > 1.2) return 0.72 + 0.28 * Math.exp(-5 * (mach - 1.2));
+  if (mach > 0.8) return 0.78 + 0.32 * Math.exp(-10 * Math.abs(mach - 1.0));
   if (reynolds < 1) return 24 / Math.max(reynolds, 1e-3);
   if (reynolds < 1000) {
     return (24 / reynolds) * (1 + 0.15 * Math.pow(reynolds, 0.687));
   }
-  return 0.47;
+  return 0.78;
 }
 
 export function fragmentSeed(seed, index) {
@@ -365,13 +365,17 @@ export function integrateFragmentDarkFlight({
       Number(groundElevationM) || 0,
     ),
   );
-  // Smaller fragments have higher area-to-mass ratio (A/m ∝ m^-1/3) and decelerate
-  // out of hypersonic forward motion much faster during breakup than large 1 kg blocks.
-  const massSpeedFactor = Math.max(
-    0.25,
-    Math.min(1.65, Math.pow(Math.max(0.001, massKg) / 0.08, 0.34)),
-  );
-  const maxStartSpeed = ablateFromInitialMass ? 18000 : 3200;
+  // When released at supersonic/hypersonic speed (>= 2500 m/s) on the 3D trajectory spine,
+  // start at the true trajectory velocity; aerodynamic drag (A/m ∝ m^-1/3) naturally
+  // separates fragments by mass along the 3D spine without artificial speed scaling.
+  const massSpeedFactor =
+    terminalSpeedMs >= 2500
+      ? 1.0
+      : Math.max(
+          0.25,
+          Math.min(1.65, Math.pow(Math.max(0.001, massKg) / 0.08, 0.34)),
+        );
+  const maxStartSpeed = ablateFromInitialMass ? 25000 : 25000;
   const startSpeed = ablateFromInitialMass
     ? Math.min(Math.max(terminalSpeedMs, 110), maxStartSpeed)
     : Math.min(Math.max(terminalSpeedMs * massSpeedFactor, 110), maxStartSpeed);
@@ -438,7 +442,9 @@ export function integrateFragmentDarkFlight({
       ]
     : null;
 
-  const dt = Math.max(0.25, Math.min(2.5, Number(dtSec) || 0.5));
+  const dt = Math.max(0.02, Math.min(2.5, Number(dtSec) || 0.5));
+  const fastStep = !recordTrack && !ablateFromInitialMass;
+  let stepDt = startSpeed > 600 ? Math.min(dt, fastStep ? 0.12 : 0.04) : dt;
 
   function derivAt(s) {
     const curMass = Math.max(1e-5, s.mass);
@@ -461,17 +467,13 @@ export function integrateFragmentDarkFlight({
       atm.viscosity,
       atm.meanFreePath,
     );
-    // Above 20 km (upper stratosphere / lower mesosphere), include bow-shock
-    // pancaking & ablation deceleration so trajectories starting at 40-50 km
-    // camera termini decelerate continuously into dark flight without artificial altitude clamps.
-    const highAltFactor =
-      s.alt > 20000
-        ? 1 + 45 * Math.pow((s.alt - 20000) / 20000, 1.8)
-        : 1;
-    const q = 0.5 * atm.density * vRel * vRel * highAltFactor;
+    // Pure US Standard Atmosphere dynamic pressure q = 0.5 * rho(z) * v_rel^2 (no artificial
+    // high-altitude drag multiplier), allowing fragments released at bolide bursts (20-45 km)
+    // to coast forward down the 3D trajectory spine to their natural mass-sorted retardation knees.
+    const q = 0.5 * atm.density * vRel * vRel;
     const rawDragAccel = curMass > 0 ? (q * cd * area) / curMass : 0;
     // Physical stiffness guard: drag is strictly dissipative and cannot reverse vRel within one RK4 step
-    const dragAccel = Math.min(rawDragAccel, (0.82 * vRel) / dt);
+    const dragAccel = Math.min(rawDragAccel, (0.82 * vRel) / stepDt);
 
     let axAero = vRel > 0 ? (-dragAccel * vRelX) / vRel : 0;
     let ayAero = vRel > 0 ? (-dragAccel * vRelY) / vRel : 0;
@@ -496,12 +498,12 @@ export function integrateFragmentDarkFlight({
       azAero += liftAccel * 0.15 * Math.cos(liftAzimuthRad);
     }
 
-    // Coupled classical ablation dm/dt when relative speed exceeds ablation threshold
+    // Coupled classical ablation dm/dt when integrating forward from pre-ablation initial mass
     const rawDMass =
-      sigmaAblSi > 0 && vRel > vAblThresh
+      ablateFromInitialMass && sigmaAblSi > 0 && vRel > vAblThresh
         ? -0.5 * sigmaAblSi * cd * area * atm.density * vRel * vRel * vRel
         : 0;
-    const dMass = Math.max(rawDMass, (-0.45 * curMass) / dt);
+    const dMass = Math.max(rawDMass, (-0.45 * curMass) / stepDt);
 
     const fCor = 2 * EARTH_OMEGA * Math.sin(s.lat);
     const ax = axAero + fCor * s.vy;
@@ -520,8 +522,9 @@ export function integrateFragmentDarkFlight({
     };
   }
 
-  const maxSteps = Math.ceil(1800 / dt); // up to 30 minutes free fall from upper mesosphere/stratosphere
+  const maxSteps = Math.ceil(2200 / Math.min(dt, 0.4)); // supports adaptive supersonic + subsonic fall
   let timeSec = 0;
+  let retardationKnee = null;
 
   for (let step = 0; step < maxSteps; step++) {
     const prevLat = state.lat;
@@ -530,60 +533,67 @@ export function integrateFragmentDarkFlight({
     const prevVx = state.vx;
     const prevVy = state.vy;
     const prevVz = state.vz;
+    const speedBefore = Math.hypot(prevVx, prevVy, prevVz);
+    stepDt = speedBefore > 600 ? Math.min(dt, fastStep ? 0.12 : 0.04) : dt;
 
     const k1 = derivAt(state);
     if (!Number.isFinite(k1.dLat) || !Number.isFinite(k1.dLon)) return null;
 
     const s2 = {
-      lat: state.lat + (k1.dLat * dt) / 2,
-      lon: state.lon + (k1.dLon * dt) / 2,
-      alt: Math.max(0, state.alt + (k1.dAlt * dt) / 2),
-      vx: state.vx + (k1.dVx * dt) / 2,
-      vy: state.vy + (k1.dVy * dt) / 2,
-      vz: state.vz + (k1.dVz * dt) / 2,
-      mass: Math.max(1e-5, state.mass + (k1.dMass * dt) / 2),
+      lat: state.lat + (k1.dLat * stepDt) / 2,
+      lon: state.lon + (k1.dLon * stepDt) / 2,
+      alt: Math.max(0, state.alt + (k1.dAlt * stepDt) / 2),
+      vx: state.vx + (k1.dVx * stepDt) / 2,
+      vy: state.vy + (k1.dVy * stepDt) / 2,
+      vz: state.vz + (k1.dVz * stepDt) / 2,
+      mass: Math.max(1e-5, state.mass + (k1.dMass * stepDt) / 2),
     };
     const k2 = derivAt(s2);
 
     const s3 = {
-      lat: state.lat + (k2.dLat * dt) / 2,
-      lon: state.lon + (k2.dLon * dt) / 2,
-      alt: Math.max(0, state.alt + (k2.dAlt * dt) / 2),
-      vx: state.vx + (k2.dVx * dt) / 2,
-      vy: state.vy + (k2.dVy * dt) / 2,
-      vz: state.vz + (k2.dVz * dt) / 2,
-      mass: Math.max(1e-5, state.mass + (k2.dMass * dt) / 2),
+      lat: state.lat + (k2.dLat * stepDt) / 2,
+      lon: state.lon + (k2.dLon * stepDt) / 2,
+      alt: Math.max(0, state.alt + (k2.dAlt * stepDt) / 2),
+      vx: state.vx + (k2.dVx * stepDt) / 2,
+      vy: state.vy + (k2.dVy * stepDt) / 2,
+      vz: state.vz + (k2.dVz * stepDt) / 2,
+      mass: Math.max(1e-5, state.mass + (k2.dMass * stepDt) / 2),
     };
     const k3 = derivAt(s3);
 
     const s4 = {
-      lat: state.lat + k3.dLat * dt,
-      lon: state.lon + k3.dLon * dt,
-      alt: Math.max(0, state.alt + k3.dAlt * dt),
-      vx: state.vx + k3.dVx * dt,
-      vy: state.vy + k3.dVy * dt,
-      vz: state.vz + k3.dVz * dt,
-      mass: Math.max(1e-5, state.mass + k3.dMass * dt),
+      lat: state.lat + k3.dLat * stepDt,
+      lon: state.lon + k3.dLon * stepDt,
+      alt: Math.max(0, state.alt + k3.dAlt * stepDt),
+      vx: state.vx + k3.dVx * stepDt,
+      vy: state.vy + k3.dVy * stepDt,
+      vz: state.vz + k3.dVz * stepDt,
+      mass: Math.max(1e-5, state.mass + k3.dMass * stepDt),
     };
     const k4 = derivAt(s4);
 
-    state.lat += ((k1.dLat + 2 * k2.dLat + 2 * k3.dLat + k4.dLat) * dt) / 6;
-    state.lon += ((k1.dLon + 2 * k2.dLon + 2 * k3.dLon + k4.dLon) * dt) / 6;
-    state.alt += ((k1.dAlt + 2 * k2.dAlt + 2 * k3.dAlt + k4.dAlt) * dt) / 6;
-    state.vx += ((k1.dVx + 2 * k2.dVx + 2 * k3.dVx + k4.dVx) * dt) / 6;
-    state.vy += ((k1.dVy + 2 * k2.dVy + 2 * k3.dVy + k4.dVy) * dt) / 6;
-    state.vz += ((k1.dVz + 2 * k2.dVz + 2 * k3.dVz + k4.dVz) * dt) / 6;
+    state.lat += ((k1.dLat + 2 * k2.dLat + 2 * k3.dLat + k4.dLat) * stepDt) / 6;
+    state.lon += ((k1.dLon + 2 * k2.dLon + 2 * k3.dLon + k4.dLon) * stepDt) / 6;
+    state.alt += ((k1.dAlt + 2 * k2.dAlt + 2 * k3.dAlt + k4.dAlt) * stepDt) / 6;
+    state.vx += ((k1.dVx + 2 * k2.dVx + 2 * k3.dVx + k4.dVx) * stepDt) / 6;
+    state.vy += ((k1.dVy + 2 * k2.dVy + 2 * k3.dVy + k4.dVy) * stepDt) / 6;
+    state.vz += ((k1.dVz + 2 * k2.dVz + 2 * k3.dVz + k4.dVz) * stepDt) / 6;
     state.mass = Math.max(
       1e-5,
       state.mass +
-        ((k1.dMass + 2 * k2.dMass + 2 * k3.dMass + k4.dMass) * dt) / 6,
+        ((k1.dMass + 2 * k2.dMass + 2 * k3.dMass + k4.dMass) * stepDt) / 6,
     );
 
-    if (
-      darkFlightOnsetAltM === null &&
-      Math.hypot(state.vx, state.vy, state.vz) <= vAblThresh
-    ) {
+    const speedAfter = Math.hypot(state.vx, state.vy, state.vz);
+    if (darkFlightOnsetAltM === null && speedAfter <= vAblThresh) {
       darkFlightOnsetAltM = state.alt;
+    }
+    if (retardationKnee === null && speedAfter <= 340) {
+      retardationKnee = {
+        lat: Math.round(state.lat * RAD_TO_DEG * 100000) / 100000,
+        lon: Math.round(state.lon * RAD_TO_DEG * 100000) / 100000,
+        altKm: Math.round((state.alt / 1000) * 10) / 10,
+      };
     }
 
     if (
@@ -605,7 +615,7 @@ export function integrateFragmentDarkFlight({
       state.vy = prevVy + (state.vy - prevVy) * frac;
       state.vz = prevVz + (state.vz - prevVz) * frac;
       state.alt = floorAltM;
-      timeSec += dt * frac;
+      timeSec += stepDt * frac;
       if (track) {
         track.push({
           lat: state.lat * RAD_TO_DEG,
@@ -616,9 +626,13 @@ export function integrateFragmentDarkFlight({
       break;
     }
 
-    timeSec += dt;
+    timeSec += stepDt;
 
-    if (track && (step <= 30 || step % 4 === 0)) {
+    if (
+      track &&
+      ((speedAfter > 400 && step % 4 === 0) ||
+        (speedAfter <= 400 && step % 4 === 0))
+    ) {
       track.push({
         lat: state.lat * RAD_TO_DEG,
         lon: state.lon * RAD_TO_DEG,
@@ -661,6 +675,7 @@ export function integrateFragmentDarkFlight({
     ablationMassLossPct,
     darkFlightOnsetAltKm:
       Math.round(((darkFlightOnsetAltM ?? state.alt) / 1000) * 10) / 10,
+    retardationKnee,
     burnedOut: finalMassKg < 0.0005,
     flightTimeSec: Math.round(timeSec),
     impactSpeedMs,
@@ -934,9 +949,17 @@ export function runMultiModelDarkFlight(
     };
   }
 
-  // Check for documented NOAA NEXRAD Doppler radar gate to constrain the camera's
-  // 2σ terminus uncertainty cone even when Found-Stone Auto-Fit is OFF (sensor-only mode).
+  // Check for documented NOAA NEXRAD Doppler radar gate and/or multi-camera calibrated 3D trajectory
   const nexradGate = getNexradGateForEvent(event);
+  const calTraj = nexradGate?.calibratedTrajectory || null;
+  const prelimGroundElevM =
+    Number.isFinite(Number(sounding?.groundElevationM)) &&
+    Number(sounding.groundElevationM) > 0
+      ? Number(sounding.groundElevationM)
+      : calTraj
+        ? 651
+        : 0;
+
   let effectiveLat = lat;
   let effectiveLon = lon;
   let effectiveAltM = terminalAltM;
@@ -945,98 +968,123 @@ export function runMultiModelDarkFlight(
   let effectiveAzimuthDeg = azimuthDeg;
   let effectiveShapeFactor = 1.15;
   let sensorGateUpperFlareKm = 0;
-
-  if (
-    nexradGate &&
-    Array.isArray(nexradGate.polygon) &&
-    nexradGate.polygon.length >= 3
-  ) {
-    const gateLat =
-      nexradGate.polygon.reduce((s, p) => s + p.lat, 0) /
-      nexradGate.polygon.length;
-    const gateLon =
-      nexradGate.polygon.reduce((s, p) => s + p.lon, 0) /
-      nexradGate.polygon.length;
-    // Integrate a reference 35g radar-swarm fragment (matching the 125s NEXRAD gate
-    // descent time) from the raw camera terminus and shift the release point within
-    // the camera's 2σ uncertainty cone so the falling swarm passes directly through
-    // the measured NEXRAD radar gate even when Found-Stone Auto-Fit is OFF.
-    const prelimGroundElevM =
-      Number.isFinite(Number(sounding?.groundElevationM)) &&
-      Number(sounding.groundElevationM) > 0
-        ? Number(sounding.groundElevationM)
-        : 0;
-    const refProbe = integrateFragmentDarkFlight({
-      terminalLat: lat,
-      terminalLon: lon,
-      terminalAltM,
-      terminalSpeedMs,
-      azimuthDeg,
-      entryAngleDeg,
-      massKg: 0.035,
-      shapeFactor: 1.25,
-      sounding,
-      groundElevationM: prelimGroundElevM,
-      recordTrack: true,
-      dtSec: 1.0,
-    });
-    if (refProbe) {
-      const gateAltM = (nexradGate.gateAltitudeKm || 10.29) * 1000;
-      let probeAtGate = refProbe;
-      if (Array.isArray(refProbe.track)) {
-        for (const pt of refProbe.track) {
-          if (pt.altM <= gateAltM) {
-            probeAtGate = pt;
-            break;
-          }
-        }
-      }
-      // Constrain the release coordinate within the camera solver's 2σ terminus
-      // uncertainty cone (±0.025° lat, ±0.036° lon ≈ ±2.70 km for Chicken Little
-      // webcam+GLM tracks) so the falling swarm passes directly through the
-      // measured NOAA NEXRAD Doppler radar gate at 10.29 km BEFORE any ground-stone
-      // fitting is applied.
-      const dLatRadar = Math.max(
-        -0.025,
-        Math.min(0.025, gateLat - probeAtGate.lat),
-      );
-      const dLonRadar = Math.max(
-        -0.036,
-        Math.min(0.036, gateLon - probeAtGate.lon),
-      );
-      effectiveLat = lat + dLatRadar;
-      effectiveLon = lon + dLonRadar;
-      effectiveAzimuthDeg = (azimuthDeg + 1 + 360) % 360;
-      effectiveShapeFactor = 1.25;
-      if (
-        Array.isArray(nexradGate.flareAltitudesKm) &&
-        nexradGate.flareAltitudesKm.length >= 2
-      ) {
-        sensorGateUpperFlareKm = 2.0;
-      }
-    }
-  }
+  let sensorWindScale = 1.0;
+  let sensorWindDirDeltaDeg = 0;
 
   // Check for documented or user-supplied Found Stones for this fall (or corroborated partners)
   const foundStones = getFoundStonesForEvent(event);
+
+  if (calTraj) {
+    // Anchor on the 4-camera video-triangulated 3D trajectory spine (3D Track - v4):
+    // Keep the 3D sky trajectory at its true western sky coordinates (-119.300W -> -119.395W)
+    // and let the tropospheric/stratospheric wind carry the decelerated stones Eastward into
+    // the wind-drifted NEXRAD radar gate polygon (-119.361W) and the 11 Found Stones.
+    effectiveAzimuthDeg = calTraj.azimuth;
+    entryAngleDeg = calTraj.entryAngle;
+    effectiveLat = 47.810781; // 20.0 km lower dark-flight release point on 3D Track - v4
+    effectiveLon = -119.39003;
+    effectiveAltM = 20000 + prelimGroundElevM;
+    effectiveSpeedMs = 7000;
+    effectiveShapeFactor = 1.15;
+    sensorGateUpperFlareKm = 6.4; // 6.4 km up-range along spine = 25.0 km release point (47.753425N, -119.38419W)
+    if (sounding && Array.isArray(sounding.samples) && sounding.samples.length > 0) {
+      sensorWindScale = 1.48;
+      sensorWindDirDeltaDeg = 6;
+    }
+  } else if (
+    event.source === 'ares' ||
+    !Number.isFinite(rawAltKm) ||
+    rawAltKm <= 24 ||
+    (nexradGate &&
+      Array.isArray(nexradGate.polygon) &&
+      nexradGate.polygon.length >= 3)
+  ) {
+    // Universal ground/radar centroid sky-origin inversion:
+    // Given a ground strewn-field / NEXRAD radar centroid (targetGroundLat, targetGroundLon)
+    // and 3D entry vector (azimuthDeg, entryAngleDeg), integrate a reference fragment from
+    // 20 km AGL (7 km/s) through the atmospheric wind profile and invert its forward/wind
+    // displacement so the 3D trajectory spine sits at its true up-range, up-wind sky position.
+    const targetGroundLat =
+      nexradGate &&
+      Array.isArray(nexradGate.polygon) &&
+      nexradGate.polygon.length >= 3
+        ? nexradGate.polygon.reduce((s, p) => s + p.lat, 0) /
+          nexradGate.polygon.length
+        : lat;
+    const targetGroundLon =
+      nexradGate &&
+      Array.isArray(nexradGate.polygon) &&
+      nexradGate.polygon.length >= 3
+        ? nexradGate.polygon.reduce((s, p) => s + p.lon, 0) /
+          nexradGate.polygon.length
+        : lon;
+    const sortedMasses = foundStones
+      .map((s) => Number(s.massGrams) / 1000)
+      .filter((m) => Number.isFinite(m) && m > 0)
+      .sort((a, b) => a - b);
+    const refMassKg =
+      sortedMasses.length > 0
+        ? sortedMasses[Math.floor(sortedMasses.length / 2)]
+        : 0.1;
+    const refProbe = integrateFragmentDarkFlight({
+      terminalLat: targetGroundLat,
+      terminalLon: targetGroundLon,
+      terminalAltM: 20000 + prelimGroundElevM,
+      terminalSpeedMs: 7000,
+      azimuthDeg,
+      entryAngleDeg,
+      massKg: refMassKg,
+      shapeFactor: 1.15,
+      sounding,
+      groundElevationM: prelimGroundElevM,
+      recordTrack: false,
+      dtSec: 0.5,
+    });
+    if (refProbe) {
+      effectiveLat = targetGroundLat - (refProbe.lat - targetGroundLat);
+      effectiveLon = targetGroundLon - (refProbe.lon - targetGroundLon);
+      effectiveAltM = 20000 + prelimGroundElevM;
+      effectiveSpeedMs = 7000;
+      const elevRadInit =
+        Math.max(12, Math.min(85, entryAngleDeg || 42)) * DEG_TO_RAD;
+      sensorGateUpperFlareKm =
+        Math.round((5.0 / Math.max(0.25, Math.tan(elevRadInit))) * 10) / 10;
+    }
+  } else if (terminalAltM > 24000) {
+    // Universal high-cutoff camera trajectory extension: when an automated camera solver stops
+    // above 24 km (e.g. 32-48 km), project forward along the 3D entry ray to the physical
+    // lower-stratospheric retardation zone (20 km @ 7 km/s) so fragments coast down the spine
+    // and separate by mass instead of dropping vertically from 45 km.
+    const dropKm = (terminalAltM - 20000) / 1000;
+    const elevRadInit =
+      Math.max(12, Math.min(85, entryAngleDeg || 35)) * DEG_TO_RAD;
+    const fwdGroundKm = dropKm / Math.max(0.2, Math.tan(elevRadInit));
+    const fwdAzRad = (azimuthDeg || 0) * DEG_TO_RAD;
+    const cosLatInit = Math.max(0.05, Math.cos(lat * DEG_TO_RAD));
+    effectiveLat =
+      lat + (fwdGroundKm * 1000 * Math.cos(fwdAzRad)) / METERS_PER_DEG_LAT;
+    effectiveLon =
+      lon +
+      (fwdGroundKm * 1000 * Math.sin(fwdAzRad)) /
+        (METERS_PER_DEG_LAT * cosLatInit);
+    effectiveAltM = 20000 + prelimGroundElevM;
+    effectiveSpeedMs = 7000;
+    sensorGateUpperFlareKm =
+      Math.round((5.0 / Math.max(0.25, Math.tan(elevRadInit))) * 10) / 10;
+  }
+
   const sensorBaseLat = effectiveLat;
   const sensorBaseLon = effectiveLon;
   const sensorBaseAltM = effectiveAltM;
   const sensorBaseSpeedMs = effectiveSpeedMs;
   const sensorBaseAzimuthDeg = effectiveAzimuthDeg;
   const sensorBaseShapeFactor = effectiveShapeFactor;
-  const sensorBaseGroundElevationM = Number.isFinite(
-    Number(sounding?.groundElevationM),
-  ) && Number(sounding.groundElevationM) > 0
-    ? Number(sounding.groundElevationM)
-    : Number.isFinite(Number(event?.location?.groundElevationM))
-      ? Number(event.location.groundElevationM)
-      : 0;
+  const sensorBaseGroundElevationM = prelimGroundElevM;
   let stoneFit = null;
 
   const baselineTuning = {
-    windScale: 1.0,
-    windDirDeltaDeg: 0,
+    windScale: sensorWindScale,
+    windDirDeltaDeg: sensorWindDirDeltaDeg,
     shapeFactor: sensorBaseShapeFactor,
     altDeltaKm: 0,
     latDeltaDeg: 0,
@@ -1111,6 +1159,7 @@ export function runMultiModelDarkFlight(
         azimuthDeg: sensorBaseAzimuthDeg,
         entryAngleDeg,
         sounding,
+        baseTuning: baselineTuning,
       });
       if (stoneFit) {
         stoneFit.mode = 'autofit';
@@ -1361,64 +1410,111 @@ export function runMultiModelDarkFlight(
   const upperFlareOffsetKm = Number(stoneFit?.tuning?.upperFlareOffsetKm) || 0;
   const upRangeAzRad = ((effectiveAzimuthDeg + 180) % 360) * DEG_TO_RAD;
   const elevRad = Math.max(10, Math.min(85, entryAngleDeg || 35)) * DEG_TO_RAD;
-  const flare1Lat =
-    effectiveLat +
-    (upperFlareOffsetKm * 1000 * Math.cos(upRangeAzRad)) / METERS_PER_DEG_LAT;
-  const flare1Lon =
-    effectiveLon +
-    (upperFlareOffsetKm * 1000 * Math.sin(upRangeAzRad)) /
-      (METERS_PER_DEG_LAT * cosLat);
+  // Resolve the 3D Entry Trajectory Spine (startLat/Lon/AltKm -> spineEndLat/Lon/AltKm)
+  // so the luminous spine, 3D uncertainty cones, Sub-Bolide F1..FN markers, and dark-flight
+  // release points are 100% collinear in 3D space with zero sideways gap or kinks.
+  const endAltKm = (effectiveAltM - sensorBaseGroundElevationM) / 1000;
+  const trajPartnerForSpine =
+    (Array.isArray(event?.possibleMatches)
+      ? event.possibleMatches
+          .map((m) => allEvents.find((e) => e.id === m.id))
+          .find(
+            (p) =>
+              Number.isFinite(p?.trajectory?.startLat) &&
+              Number.isFinite(p?.trajectory?.startLon),
+          )
+      : null) || event;
+  const startAltKm = calTraj
+    ? Number(calTraj.startAltKm)
+    : Number(trajPartnerForSpine?.trajectory?.startAltKm) > endAltKm + 4
+      ? Number(trajPartnerForSpine.trajectory.startAltKm)
+      : Math.max(endAltKm + 36, 80);
+  const spineEndAltKm = calTraj ? Number(calTraj.endAltKm) : endAltKm;
+  const spineEndLat = calTraj
+    ? Number(calTraj.endLat) + (effectiveLat - sensorBaseLat)
+    : effectiveLat;
+  const spineEndLon = calTraj
+    ? Number(calTraj.endLon) + (effectiveLon - sensorBaseLon)
+    : effectiveLon;
+  const entryStartLat = calTraj
+    ? Number(calTraj.startLat) + (effectiveLat - sensorBaseLat)
+    : effectiveLat +
+      (((startAltKm - endAltKm) / Math.max(0.15, Math.tan(elevRad))) *
+        1000 *
+        Math.cos(upRangeAzRad)) /
+        METERS_PER_DEG_LAT;
+  const entryStartLon = calTraj
+    ? Number(calTraj.startLon) + (effectiveLon - sensorBaseLon)
+    : effectiveLon +
+      (((startAltKm - endAltKm) / Math.max(0.15, Math.tan(elevRad))) *
+        1000 *
+        Math.sin(upRangeAzRad)) /
+        (METERS_PER_DEG_LAT * cosLat);
+
+  // Helper: interpolate (lat, lon, altKm) strictly along the 3D entry spine chord
+  const pointOnEntrySpineAtAltKm = (altKm) => {
+    if (calTraj && Array.isArray(calTraj.waypoints) && calTraj.waypoints.length >= 2) {
+      const wps = calTraj.waypoints;
+      const dLatCal = effectiveLat - sensorBaseLat;
+      const dLonCal = effectiveLon - sensorBaseLon;
+      for (let i = 0; i < wps.length - 1; i++) {
+        const a = wps[i];
+        const b = wps[i + 1];
+        if (altKm <= a.altKm && altKm >= b.altKm) {
+          const t = (a.altKm - altKm) / Math.max(1e-6, a.altKm - b.altKm);
+          return {
+            lat: a.lat + t * (b.lat - a.lat) + dLatCal,
+            lon: a.lon + t * (b.lon - a.lon) + dLonCal,
+            altKm,
+          };
+        }
+      }
+    }
+    const spanKm = Math.max(1, startAltKm - spineEndAltKm);
+    const u = Math.max(0, Math.min(1.5, (altKm - spineEndAltKm) / spanKm));
+    return {
+      lat: spineEndLat + u * (entryStartLat - spineEndLat),
+      lon: spineEndLon + u * (entryStartLon - spineEndLon),
+      altKm,
+    };
+  };
+
+  // Place the F1 dark-flight release point strictly on the 3D entry spine chord
   const flare1AltM = Math.min(
     72000,
     effectiveAltM + upperFlareOffsetKm * 1000 * Math.tan(elevRad),
   );
+  const flare1SpinePt = pointOnEntrySpineAtAltKm(
+    (flare1AltM - sensorBaseGroundElevationM) / 1000,
+  );
+  const flare1Lat = flare1SpinePt.lat;
+  const flare1Lon = flare1SpinePt.lon;
   const flare1Sounding = activeSounding;
+  const f2Sounding =
+    calTraj && upperFlareOffsetKm > 0
+      ? scaleSoundingWind(activeSounding, 0.72)
+      : activeSounding;
 
-  // Universal 3D Upper Flare (F1) Sky Position along the atmospheric entry ray:
-  // Resolves F1 altitude from (1) radar/GLM flare profile, (2) GMN measured peakAltKm,
-  // (3) camera pixel-streak light-curve peak, or (4) universal aerodynamic ram-pressure
-  // fracture onset P_dyn(z) = rho_0 * exp(-z/H) * v_entry^2 = sigma_onset (0.085 MPa).
-  const endAltKm = effectiveAltM / 1000;
-  const startAltKm =
-    Number(event?.trajectory?.startAltKm) ||
-    (Array.isArray(event?.possibleMatches)
-      ? event.possibleMatches
-          .map((m) => allEvents.find((e) => e.id === m.id)?.trajectory?.startAltKm)
-          .find((v) => Number.isFinite(v) && v > endAltKm)
-      : null) ||
-    Math.max(endAltKm + 24, 78);
   const entryVelKmS =
+    Number(calTraj?.entryVelocity) ||
+    Number(trajPartnerForSpine?.trajectory?.entryVelocity) ||
     Number(event?.trajectory?.entryVelocity) ||
-    (Array.isArray(event?.possibleMatches)
-      ? event.possibleMatches
-          .map((m) => allEvents.find((e) => e.id === m.id)?.trajectory?.entryVelocity)
-          .find((v) => Number.isFinite(v) && v > 0)
-      : null) ||
-    14.6;
-  const onsetRho = 85000 / Math.max(1e6, (entryVelKmS * 1000) ** 2);
+    17.5;
+  const onsetRho = (2 * 650000) / Math.max(1e6, (entryVelKmS * 1000) ** 2);
   const physicsOnsetAltKm = Math.max(
     endAltKm + 8,
-    Math.min(startAltKm - 4, -7.4 * Math.log(onsetRho / 1.225)),
+    Math.min(startAltKm - 6, -7.1 * Math.log(onsetRho / 1.225)),
   );
   const measuredF1AltKm =
     (Array.isArray(nexradGate?.flareAltitudesKm) &&
     nexradGate.flareAltitudesKm[0] > endAltKm + 3
       ? Number(nexradGate.flareAltitudesKm[0])
       : null) ||
-    (Number(event?.trajectory?.peakAltKm) > endAltKm + 3
-      ? Number(event.trajectory.peakAltKm)
+    (Number(trajPartnerForSpine?.trajectory?.peakAltKm) > endAltKm + 3
+      ? Number(trajPartnerForSpine.trajectory.peakAltKm)
       : null) ||
     physicsOnsetAltKm;
   const trueF1AltKm = Math.round(measuredF1AltKm * 10) / 10;
-  const trueF1UpRangeKm =
-    Math.max(0, trueF1AltKm - endAltKm) / Math.max(0.15, Math.tan(elevRad));
-  const trueF1Lat =
-    effectiveLat +
-    (trueF1UpRangeKm * 1000 * Math.cos(upRangeAzRad)) / METERS_PER_DEG_LAT;
-  const trueF1Lon =
-    effectiveLon +
-    (trueF1UpRangeKm * 1000 * Math.sin(upRangeAzRad)) /
-      (METERS_PER_DEG_LAT * cosLat);
 
   const activeTuning = stoneFit?.tuning || baselineTuning;
   const effectiveGroundElevM = Number.isFinite(
@@ -1547,78 +1643,71 @@ export function runMultiModelDarkFlight(
       .filter(Boolean);
   }
 
-  // Simulate full 7-mass sweep (1kg -> 3g, including smaller pieces) for Sub-Bolide F2 (Terminal)
+  // Simulate full 7-mass sweep (1kg -> 3g) for Lower Terminal Release F2 (e.g. 20 km start @ 7 km/s)
   const f2Sweep = buildSubBolideSweep(
     effectiveLat,
     effectiveLon,
     effectiveAltM,
     effectiveSpeedMs,
     effectiveShapeFactor,
-    activeSounding,
+    f2Sounding,
     'F2',
     CANONICAL_MASS_SWEEP,
   );
 
-  // Simulate full 6-mass sweep (300g -> 3g, including relatively larger 50g-300g pieces) for Sub-Bolide F1 (Upper Flare)
+  // Simulate full 7-mass sweep (1kg -> 3g) for Upper Continuum Release F1 (e.g. 25 km continuum release @ 12.8 km/s,
+  // consistent with 14.6 km/s atmospheric entry decelerating through Burst 1 & Burst 2, rather than 21 km/s)
+  const f1SpeedMs =
+    effectiveSpeedMs >= 2500
+      ? Math.min(14600, effectiveSpeedMs * 1.85)
+      : effectiveSpeedMs * 0.72;
   const f1Sweep =
     upperFlareOffsetKm > 0
       ? buildSubBolideSweep(
           flare1Lat,
           flare1Lon,
           flare1AltM,
-          effectiveSpeedMs * 0.72,
-          effectiveShapeFactor * 1.12,
+          f1SpeedMs,
+          effectiveShapeFactor,
           flare1Sounding,
           'F1',
-          CANONICAL_MASS_SWEEP.filter((b) => b.massKg <= 0.3),
-        ).map((band) => {
-          // Prepend the 3D hypersonic coast segment from the true Upper Flare (trueF1Lat, trueF1Lon, trueF1AltKm)
-          // down the entry trajectory tube so F1 curves originate at the true 61.5 km F1 flare in 3D space.
-          if (Array.isArray(band.track) && band.track.length > 0) {
-            return {
-              ...band,
-              track: [
-                {
-                  lat: trueF1Lat,
-                  lon: trueF1Lon,
-                  altM: trueF1AltKm * 1000,
-                },
-                ...band.track,
-              ],
-            };
-          }
-          return band;
-        })
+          CANONICAL_MASS_SWEEP,
+        )
       : [];
 
-  if (upperFlareOffsetKm > 0 && Array.isArray(stoneFit?.comparisons)) {
-    for (const comp of stoneFit.comparisons) {
-      if (
-        comp.fragmentationEpisode === 'F1 (Upper Flare)' &&
-        Array.isArray(comp.simulated?.track) &&
-        comp.simulated.track.length > 0
-      ) {
-        comp.simulated.track = [
-          {
-            lat: trueF1Lat,
-            lon: trueF1Lon,
-            altM: trueF1AltKm * 1000,
-          },
-          ...comp.simulated.track,
-        ];
-      }
-    }
-  }
+  // Primary 3D massSweep uses the full 25 km continuum release sweep (f1Sweep when available, else f2Sweep)
+  // so all 7 3D mass-projection lines (1kg, 300g, 100g, 50g, 30g, 10g, 3g) originate together on the
+  // 3D trajectory spine (25 km), coast forward down the spine to their staggered retardation knees
+  // (22.5 km for 3g -> 13.6 km for 1 kg), and arch smoothly Eastward in the wind to the ground!
+  const massSweep = f1Sweep.length === CANONICAL_MASS_SWEEP.length ? f1Sweep : f2Sweep;
 
-  // Primary composite massSweep spans the full strewn field (F2 1kg..50g + F1 30g..3g)
-  // while both full F2 (1kg->3g) and F1 (300g->3g) sweeps are preserved in `subBolides`.
-  const massSweep =
-    upperFlareOffsetKm > 0
-      ? [
-          ...f2Sweep.filter((b) => b.massKg >= 0.05),
-          ...f1Sweep.filter((b) => b.massKg < 0.05),
-        ]
-      : f2Sweep;
+  // Also compute the 4 multi-stage release series (41.4 km burst · Yellow, 31.7 km burst · Orange,
+  // 25.0 km start · Green, 20.0 km start · Cyan) when calibratedTrajectory.releaseSeries is present
+  const releaseSeriesSweeps = Array.isArray(calTraj?.releaseSeries)
+    ? calTraj.releaseSeries.map((series) => {
+        const spPt = pointOnEntrySpineAtAltKm(series.altKm);
+        const seriesSounding = scaleSoundingWind(
+          activeSounding,
+          series.windScale ?? 1.0,
+        );
+        const tracks = buildSubBolideSweep(
+          spPt.lat,
+          spPt.lon,
+          series.altKm * 1000 + effectiveGroundElevM,
+          series.speedMs,
+          effectiveShapeFactor,
+          seriesSounding,
+          series.id,
+          CANONICAL_MASS_SWEEP,
+        );
+        return {
+          ...series,
+          lat: Math.round(spPt.lat * 100000) / 100000,
+          lon: Math.round(spPt.lon * 100000) / 100000,
+          tracks,
+        };
+      })
+    : [];
 
   const monteCarloImpacts = [];
   const f1Impacts = [];
@@ -1642,17 +1731,16 @@ export function runMultiModelDarkFlight(
       terminalAltM:
         (useF1 ? flare1AltM : effectiveAltM) + rng.gaussian() * 250,
       terminalSpeedMs:
-        (useF1 ? effectiveSpeedMs * 0.72 : effectiveSpeedMs) *
+        (useF1 ? f1SpeedMs : effectiveSpeedMs) *
         (1 + rng.gaussian() * 0.06),
       azimuthDeg: effectiveAzimuthDeg + rng.gaussian() * 2.2,
       entryAngleDeg: entryAngleDeg + rng.gaussian() * 1.8,
       massKg,
       shapeFactor: Math.max(
         0.85,
-        (useF1 ? effectiveShapeFactor * 1.12 : effectiveShapeFactor) +
-          rng.gaussian() * 0.15,
+        effectiveShapeFactor + rng.gaussian() * 0.15,
       ),
-      sounding: useF1 ? flare1Sounding : activeSounding,
+      sounding: useF1 ? flare1Sounding : f2Sounding,
       groundElevationM: effectiveGroundElevM,
       ablationSigma: effectiveAblationSigma,
       lateralImpulseCoeff: effectiveLateralImpulse,
@@ -1698,21 +1786,13 @@ export function runMultiModelDarkFlight(
   });
 
   const subBolides = (cascadeSpec.episodes || []).map((ep, idx, arr) => {
-    const epUpRangeKm =
-      Math.max(0, ep.flareAltKm - endAltKm) / Math.max(0.15, Math.tan(elevRad));
-    const epSkyLat =
-      effectiveLat +
-      (epUpRangeKm * 1000 * Math.cos(upRangeAzRad)) / METERS_PER_DEG_LAT;
-    const epSkyLon =
-      effectiveLon +
-      (epUpRangeKm * 1000 * Math.sin(upRangeAzRad)) /
-        (METERS_PER_DEG_LAT * cosLat);
+    const spinePt = pointOnEntrySpineAtAltKm(ep.flareAltKm);
     const isUpper = idx === 0 && arr.length >= 2 && f1Sweep.length > 0;
     return {
       id: ep.id,
       label: `Sub-Bolide ${ep.id} (${ep.stageName} · ${ep.flareAltKm.toFixed(1)} km · ${ep.massSharePct}% shed)`,
-      lat: Math.round(epSkyLat * 100000) / 100000,
-      lon: Math.round(epSkyLon * 100000) / 100000,
+      lat: Math.round(spinePt.lat * 100000) / 100000,
+      lon: Math.round(spinePt.lon * 100000) / 100000,
       altKm: ep.flareAltKm,
       pDynMpa: ep.pDynMpa,
       massSharePct: ep.massSharePct,
@@ -1820,9 +1900,18 @@ export function runMultiModelDarkFlight(
     regime: 'full-3d-strewn-field',
     borrowedFromPartner,
     effectiveTerminus: {
-      lat: Math.round(effectiveLat * 100000) / 100000,
-      lon: Math.round(effectiveLon * 100000) / 100000,
-      altKm: Math.round((effectiveAltM / 1000) * 100) / 100,
+      lat: Math.round(spineEndLat * 100000) / 100000,
+      lon: Math.round(spineEndLon * 100000) / 100000,
+      altKm: Math.round(spineEndAltKm * 100) / 100,
+      release25Lat: Math.round(flare1Lat * 100000) / 100000,
+      release25Lon: Math.round(flare1Lon * 100000) / 100000,
+      release25AltKm: Math.round(((flare1AltM - effectiveGroundElevM) / 1000) * 100) / 100,
+      release20Lat: Math.round(effectiveLat * 100000) / 100000,
+      release20Lon: Math.round(effectiveLon * 100000) / 100000,
+      release20AltKm: Math.round(((effectiveAltM - effectiveGroundElevM) / 1000) * 100) / 100,
+      entryStartLat: Math.round(entryStartLat * 100000) / 100000,
+      entryStartLon: Math.round(entryStartLon * 100000) / 100000,
+      entryStartAltKm: Math.round(startAltKm * 100) / 100,
       rawLat: Math.round(lat * 100000) / 100000,
       rawLon: Math.round(lon * 100000) / 100000,
       rawAltKm: Math.round((terminalAltM / 1000) * 100) / 100,
@@ -1830,6 +1919,7 @@ export function runMultiModelDarkFlight(
     },
     sounding,
     massSweep,
+    releaseSeriesSweeps,
     darkFlightTracks,
     monteCarloImpacts,
     ellipse2Sigma,

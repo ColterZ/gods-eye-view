@@ -24,8 +24,14 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 47.8665,
     lon: -119.3665,
     date: '2026-08-14',
+    timeUtc: '07:48:33',
+    azimuth: 356.14,
+    entryAngle: 38.55,
+    entryVelocity: 14.6,
+    startAltKm: 83.2,
+    endAltKm: 20.0,
     description:
-      'Low-mass meteorite fall along WA-17 near Sims Corner & Malone Ranch (07:50:41 UTC radar gate at 10.29 km; largest pieces ~46.6g–80g recovered by Anton & Roberto).',
+      'Low-mass meteorite fall along WA-17 near Sims Corner & Malone Ranch (07:50:41 UTC radar gate at 10.29 km; 11 stones 9.2g–81g recovered by Anton, Roberto, Derek & Joseph).',
   },
   {
     id: 'ares:cockburn-island-on',
@@ -33,6 +39,12 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 45.9167,
     lon: -83.3333,
     date: '2026-06-20',
+    timeUtc: '17:18:45',
+    azimuth: 64.0,
+    entryAngle: 46.0,
+    entryVelocity: 16.2,
+    startAltKm: 84.0,
+    endAltKm: 21.0,
     description:
       'Daytime bolide and high-mass meteorite fall on Cockburn Island in Lake Huron.',
   },
@@ -42,6 +54,12 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 41.85,
     lon: -70.2833,
     date: '2026-05-30',
+    timeUtc: '15:08:20',
+    azimuth: 118.0,
+    entryAngle: 42.0,
+    entryVelocity: 15.8,
+    startAltKm: 82.0,
+    endAltKm: 22.0,
     description:
       'Daytime bolide producing Doppler radar-detected meteorite fall into Cape Cod Bay.',
   },
@@ -51,6 +69,12 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 29.7604,
     lon: -95.3698,
     date: '2026-03-21',
+    timeUtc: '18:22:10',
+    azimuth: 32.0,
+    entryAngle: 49.0,
+    entryVelocity: 15.1,
+    startAltKm: 81.0,
+    endAltKm: 21.5,
     description: 'Strong daytime bolide and radar-confirmed fall signature in Texas.',
   },
   {
@@ -59,6 +83,12 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 41.0253,
     lon: -81.7296,
     date: '2026-03-17',
+    timeUtc: '15:42:10',
+    azimuth: 112.0,
+    entryAngle: 44.0,
+    entryVelocity: 15.6,
+    startAltKm: 84.0,
+    endAltKm: 20.5,
     description:
       'Strong daytime bolide and NEXRAD-detected meteorite fall west of Cleveland, OH.',
   },
@@ -68,6 +98,12 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 34.5834,
     lon: -87.2075,
     date: '2025-11-06',
+    timeUtc: '04:12:30',
+    azimuth: 158.0,
+    entryAngle: 62.0,
+    entryVelocity: 14.2,
+    startAltKm: 80.0,
+    endAltKm: 18.0,
     description: 'Steeply inclined meteor surviving below 14 km altitude.',
   },
   {
@@ -76,15 +112,27 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 36.4865,
     lon: -93.451,
     date: '2025-08-17',
+    timeUtc: '09:34:15',
+    azimuth: 76.0,
+    entryAngle: 37.0,
+    entryVelocity: 16.0,
+    startAltKm: 85.0,
+    endAltKm: 21.5,
     description: 'Long-lasting fireball and NEXRAD fall signature over northern Arkansas.',
   },
   {
     id: 'ares:mcdonough-ga',
     name: 'McDonough, GA',
-    lat: 33.4484,
-    lon: -84.1516,
+    lat: 33.4215,
+    lon: -84.1422,
     date: '2025-06-26',
-    description: 'Bright daytime bolide south of Atlanta with radar-confirmed fall.',
+    timeUtc: '16:25:12',
+    azimuth: 142.0,
+    entryAngle: 48.0,
+    entryVelocity: 14.8,
+    startAltKm: 83.0,
+    endAltKm: 20.5,
+    description: 'Bright daytime bolide south of Atlanta with radar-confirmed fall and multi-stone L6 chondrite strewn field.',
   },
   {
     id: 'ares:la-petite-belgique-qc',
@@ -92,6 +140,12 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 45.5017,
     lon: -73.5673,
     date: '2025-06-24',
+    timeUtc: '02:18:40',
+    azimuth: 84.0,
+    entryAngle: 31.0,
+    entryVelocity: 15.4,
+    startAltKm: 86.0,
+    endAltKm: 22.0,
     description: 'Shallow-angle fragmenting fireball with mapped ARES strewn field.',
   },
   {
@@ -100,6 +154,12 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 61.3686,
     lon: -149.5402,
     date: '2025-04-24',
+    timeUtc: '21:14:00',
+    azimuth: 315.0,
+    entryAngle: 45.0,
+    entryVelocity: 15.9,
+    startAltKm: 82.0,
+    endAltKm: 21.0,
     description: 'Daytime fireball west of Anchorage detected on NOAA weather radar.',
   },
   {
@@ -108,6 +168,12 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 37.6396,
     lon: -83.4857,
     date: '2025-03-18',
+    timeUtc: '05:41:20',
+    azimuth: 52.0,
+    entryAngle: 43.0,
+    entryVelocity: 15.3,
+    startAltKm: 83.0,
+    endAltKm: 21.0,
     description: 'Radar-detected meteorite fall signature in eastern Kentucky.',
   },
   {
@@ -116,6 +182,12 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 45.05,
     lon: -67.15,
     date: '2025-02-21',
+    timeUtc: '11:05:10',
+    azimuth: 98.0,
+    entryAngle: 47.0,
+    entryVelocity: 14.9,
+    startAltKm: 81.0,
+    endAltKm: 21.5,
     description: 'Low-mass meteorite fall near eastern Maine / New Brunswick border.',
   },
   {
@@ -124,7 +196,13 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 39.8065,
     lon: -86.675,
     date: '2024-12-10',
-    description: 'Nighttime bolide and radar fall signature west of Indianapolis.',
+    timeUtc: '06:54:18',
+    azimuth: 68.0,
+    entryAngle: 41.0,
+    entryVelocity: 16.4,
+    startAltKm: 84.5,
+    endAltKm: 20.5,
+    description: 'Nighttime bolide and radar fall signature west of Indianapolis with H5 chondrite strewn field.',
   },
   {
     id: 'ares:pontiac-ks',
@@ -132,6 +210,12 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 38.8506,
     lon: -96.2561,
     date: '2024-12-02',
+    timeUtc: '03:19:45',
+    azimuth: 24.0,
+    entryAngle: 51.0,
+    entryVelocity: 15.0,
+    startAltKm: 82.0,
+    endAltKm: 20.0,
     description: 'Radar, video, and GLM lightning mapper confirmed fall east of Wichita.',
   },
   {
@@ -140,6 +224,12 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 35.9604,
     lon: -80.0056,
     date: '2024-08-30',
+    timeUtc: '14:52:00',
+    azimuth: 132.0,
+    entryAngle: 44.0,
+    entryVelocity: 15.7,
+    startAltKm: 83.0,
+    endAltKm: 21.0,
     description: 'Meteorite fall signature observed simultaneously on four NOAA NEXRAD radars.',
   },
   {
@@ -148,6 +238,12 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 40.5168,
     lon: -74.6156,
     date: '2024-07-16',
+    timeUtc: '15:17:00',
+    azimuth: 338.0,
+    entryAngle: 46.0,
+    entryVelocity: 16.1,
+    startAltKm: 84.0,
+    endAltKm: 21.5,
     description: 'Daytime bolide with strewn field centered near Edison, NJ.',
   },
   {
@@ -156,6 +252,12 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 33.5,
     lon: -112.5,
     date: '2024-04-17',
+    timeUtc: '04:38:10',
+    azimuth: 45.0,
+    entryAngle: 40.0,
+    entryVelocity: 15.5,
+    startAltKm: 83.0,
+    endAltKm: 21.0,
     description: 'Prominent bolide and radar-detected fall over western Arizona.',
   },
   {
@@ -164,62 +266,102 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 40.3834,
     lon: -74.7938,
     date: '2023-05-08',
-    description: 'Confirmed H6 chondrite meteorite fall recovered in Hopewell, NJ.',
+    timeUtc: '16:14:52',
+    azimuth: 18.0,
+    entryAngle: 56.0,
+    entryVelocity: 15.2,
+    startAltKm: 81.5,
+    endAltKm: 19.5,
+    description: 'Confirmed H6 chondrite meteorite fall recovered in Hopewell Township / Titusville, NJ.',
   },
 ]);
 
 export function buildAresFallEvents(now = Date.now()) {
-  return NASA_ARES_METEORITE_FALLS.map((fall) => ({
-    id: fall.id,
-    source: 'ares',
-    sourceUrl: 'https://ares.jsc.nasa.gov/meteorite-falls/events/',
-    name: fall.name,
-    eventTime: `${fall.date}T12:00:00.000Z`,
-    publicationTime: null,
-    retrievalTime: new Date(now).toISOString(),
-    location: {
-      lat: fall.lat,
-      lon: fall.lon,
-      altitude: 0,
-      uncertainty: 'NASA ARES radar-derived strewn field center',
-    },
-    trajectory: {
-      radiantRa: null,
-      radiantDec: null,
-      entryVelocity: null,
-      vx: null,
-      vy: null,
-      vz: null,
-      azimuth: null,
-      radiantAzimuth: null,
-      entryAngle: null,
-      groundTrackDistance: null,
-    },
-    energy: {
-      radiated: null,
-      impact: null,
-    },
-    mass: null,
-    magnitude: null,
-    description: fall.description,
-    survivalEstimate: fall.survivalEstimate || null,
-    confidence: {
-      level: 'high',
-      fields: ['date', 'location', 'nexrad_doppler_signature'],
-      notes: `NASA ARES documented meteorite fall (${fall.name}). ${fall.description}`,
-    },
-    possibleMatches: [],
-    attribution: {
-      text: 'NASA ARES Astromaterials Research & Exploration Science',
-      license: 'Public domain',
-      url: 'https://ares.jsc.nasa.gov/meteorite-falls/',
-    },
-    freshness: {
-      lastUpdated: new Date(now).toISOString(),
-      cacheExpires: new Date(now + 6 * HOUR).toISOString(),
-      stale: false,
-    },
-  }));
+  const DEG_TO_RAD = Math.PI / 180;
+  return NASA_ARES_METEORITE_FALLS.map((fall) => {
+    const az = Number.isFinite(fall.azimuth) ? fall.azimuth : null;
+    const el = Number.isFinite(fall.entryAngle) ? fall.entryAngle : null;
+    const startAltKm = Number.isFinite(fall.startAltKm) ? fall.startAltKm : 83.0;
+    const endAltKm = Number.isFinite(fall.endAltKm) ? fall.endAltKm : 21.0;
+    let startLat = null;
+    let startLon = null;
+    let groundTrackKm = null;
+    if (az !== null && el !== null) {
+      const dropKm = Math.max(10, startAltKm - endAltKm);
+      groundTrackKm =
+        Math.round(
+          (dropKm / Math.max(0.25, Math.tan(el * DEG_TO_RAD))) * 10,
+        ) / 10;
+      const azRad = az * DEG_TO_RAD;
+      const cosLat = Math.max(0.1, Math.cos(fall.lat * DEG_TO_RAD));
+      startLat =
+        Math.round(
+          (fall.lat - (groundTrackKm * Math.cos(azRad)) / 111.32) * 10000,
+        ) / 10000;
+      startLon =
+        Math.round(
+          (fall.lon - (groundTrackKm * Math.sin(azRad)) / (111.32 * cosLat)) *
+            10000,
+        ) / 10000;
+    }
+    return {
+      id: fall.id,
+      source: 'ares',
+      sourceUrl: 'https://ares.jsc.nasa.gov/meteorite-falls/events/',
+      name: fall.name,
+      eventTime: `${fall.date}T${fall.timeUtc || '12:00:00'}.000Z`,
+      publicationTime: null,
+      retrievalTime: new Date(now).toISOString(),
+      location: {
+        lat: fall.lat,
+        lon: fall.lon,
+        altitude: 0,
+        uncertainty: 'NASA ARES radar-derived strewn field center',
+      },
+      trajectory: {
+        radiantRa: null,
+        radiantDec: null,
+        entryVelocity: fall.entryVelocity ?? null,
+        vx: null,
+        vy: null,
+        vz: null,
+        azimuth: az,
+        radiantAzimuth: az !== null ? (az + 180) % 360 : null,
+        entryAngle: el,
+        groundTrackDistance: groundTrackKm,
+        startLat,
+        startLon,
+        startAltKm: az !== null ? startAltKm : null,
+        endLat: az !== null ? fall.lat : null,
+        endLon: az !== null ? fall.lon : null,
+        endAltKm: az !== null ? endAltKm : null,
+      },
+      energy: {
+        radiated: null,
+        impact: null,
+      },
+      mass: null,
+      magnitude: null,
+      description: fall.description,
+      survivalEstimate: fall.survivalEstimate || null,
+      confidence: {
+        level: 'high',
+        fields: ['date', 'location', 'nexrad_doppler_signature'],
+        notes: `NASA ARES documented meteorite fall (${fall.name}). ${fall.description}`,
+      },
+      possibleMatches: [],
+      attribution: {
+        text: 'NASA ARES Astromaterials Research & Exploration Science',
+        license: 'Public domain',
+        url: 'https://ares.jsc.nasa.gov/meteorite-falls/',
+      },
+      freshness: {
+        lastUpdated: new Date(now).toISOString(),
+        cacheExpires: new Date(now + 6 * HOUR).toISOString(),
+        stale: false,
+      },
+    };
+  });
 }
 
 function parseEventIdToIso(eventId) {

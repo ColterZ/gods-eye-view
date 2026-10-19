@@ -22,106 +22,332 @@ export const DOCUMENTED_FOUND_STONES = Object.freeze({
   'ares:sims-corner-wa': Object.freeze([
     Object.freeze({
       id: 'stone:sims-kidd-81g',
-      label: '81g - The Kidd',
-      lat: 47.88486,
-      lon: -119.35886,
+      label: '81g - Derek',
+      lat: 47.861986,
+      lon: -119.360967,
       massGrams: 81.0,
-      densityGcm3: 3.35,
-      type: 'Ordinary Chondrite',
+      densityGcm3: 3.65,
+      type: 'Ordinary Chondrite (H)',
       shape: 'subangular',
-      notes: 'Upper red circle at NE corner of blue radar gate polygon (east of WA-17)',
+      notes: 'Sims Corner find #9: 81g by Derek Fischer (10/11/2026) along Radar1 100g boundary',
+    }),
+    Object.freeze({
+      id: 'stone:sims-derek-55g',
+      label: '55.2g - Derek',
+      lat: 47.863633,
+      lon: -119.360475,
+      massGrams: 55.2,
+      densityGcm3: 3.65,
+      type: 'Ordinary Chondrite (H)',
+      shape: 'subangular',
+      notes: 'Sims Corner find #7: 55.2g by Derek Fischer (10/4/2026)',
     }),
     Object.freeze({
       id: 'stone:sims-joseph-48g',
       label: '48.5g - Joseph',
-      lat: 47.86534,
-      lon: -119.35832,
+      lat: 47.876667,
+      lon: -119.369944,
       massGrams: 48.5,
-      densityGcm3: 3.35,
-      type: 'Ordinary Chondrite',
+      densityGcm3: 3.65,
+      type: 'Ordinary Chondrite (H)',
       shape: 'subangular',
-      notes: 'Lower red circle east of blue radar gate polygon & WA-17',
+      notes: 'Sims Corner find #8: 48.5g by Joseph Walls (10/8/2026, northernmost 20km-release cluster)',
     }),
     Object.freeze({
       id: 'stone:sims-anton-46g',
       label: '46.6g - Anton',
-      lat: 47.87215,
-      lon: -119.37122,
+      lat: 47.870867,
+      lon: -119.370783,
       massGrams: 46.6,
-      densityGcm3: 3.35,
-      type: 'Ordinary Chondrite',
+      densityGcm3: 3.65,
+      type: 'Ordinary Chondrite (H)',
       shape: 'subangular',
-      notes: 'Recovered along WA-17 just south of Stacked Rocks & 100g model pin',
+      notes: 'Sims Corner first find: 46.6g by Anton Clemens (9/1/2026, just south of Stacked Rocks)',
+    }),
+    Object.freeze({
+      id: 'stone:sims-anton-40g',
+      label: '40.3g - Anton',
+      lat: 47.857067,
+      lon: -119.36235,
+      massGrams: 40.3,
+      densityGcm3: 3.65,
+      type: 'Ordinary Chondrite (H)',
+      shape: 'subangular',
+      notes: 'Sims Corner find #2: 40.3g by Anton Clemens (9/3/2026)',
+    }),
+    Object.freeze({
+      id: 'stone:sims-derek-25g',
+      label: '25g - Derek',
+      lat: 47.857694,
+      lon: -119.36055,
+      massGrams: 25.0,
+      densityGcm3: 3.65,
+      type: 'Ordinary Chondrite (H)',
+      shape: 'subangular',
+      notes: 'Sims Corner find #10: 25g by Derek Fischer (10/11/2026)',
     }),
     Object.freeze({
       id: 'stone:sims-roberto-21g',
       label: '21.5g - Roberto',
-      lat: 47.85172,
-      lon: -119.3619,
+      lat: 47.855772,
+      lon: -119.362419,
       massGrams: 21.5,
-      densityGcm3: 3.35,
-      type: 'Ordinary Chondrite',
+      densityGcm3: 3.65,
+      type: 'Ordinary Chondrite (H)',
       shape: 'fragment',
-      notes: 'Southern WA-17 cluster just north of 30g green model pin',
+      notes: 'Sims Corner find #4: 21.5g by Roberto Vargas (9/14/2026)',
+    }),
+    Object.freeze({
+      id: 'stone:sims-derek-20g',
+      label: '20.5g - Derek',
+      lat: 47.854047,
+      lon: -119.362369,
+      massGrams: 20.5,
+      densityGcm3: 3.65,
+      type: 'Ordinary Chondrite (H)',
+      shape: 'fragment',
+      notes: 'Sims Corner find #6: 20.5g by Derek Fischer (9/29/2026)',
+    }),
+    Object.freeze({
+      id: 'stone:sims-derek-18g',
+      label: '18.6g - Derek',
+      lat: 47.876897,
+      lon: -119.374121,
+      massGrams: 18.6,
+      densityGcm3: 3.65,
+      type: 'Ordinary Chondrite (H)',
+      shape: 'subrounded',
+      notes: 'Sims Corner find #11: 18.6g by Derek Fischer (10/17/2026, northernmost 20km-release cluster)',
     }),
     Object.freeze({
       id: 'stone:sims-roberto-16g',
       label: '16.3g - Roberto',
-      lat: 47.85381,
-      lon: -119.36262,
+      lat: 47.857458,
+      lon: -119.363203,
       massGrams: 16.3,
-      densityGcm3: 3.35,
-      type: 'Ordinary Chondrite',
+      densityGcm3: 3.65,
+      type: 'Ordinary Chondrite (H)',
       shape: 'subangular',
-      notes: 'Southern WA-17 cluster near 10g orange model pin',
+      notes: 'Sims Corner find #5: 16.3g by Roberto Vargas (9/15/2026)',
     }),
     Object.freeze({
-      id: 'stone:sims-anton-10g',
-      label: '10.2g - Anton',
-      lat: 47.85342,
-      lon: -119.36137,
-      massGrams: 10.2,
-      densityGcm3: 3.35,
-      type: 'Ordinary Chondrite',
+      id: 'stone:sims-anton-9g',
+      label: '9.2g - Anton',
+      lat: 47.852311,
+      lon: -119.359115,
+      massGrams: 9.2,
+      densityGcm3: 3.65,
+      type: 'Ordinary Chondrite (H)',
       shape: 'fragment',
-      notes: 'Southern WA-17 bend adjacent to 16.3g - Roberto',
+      notes: 'Sims Corner find #3: 9.2g by Anton Clemens (9/3/2026, southernmost find near Red Barn)',
     }),
   ]),
   'ares:hopewell-nj': Object.freeze([
     Object.freeze({
       id: 'stone:hopewell-1',
       label: 'Titusville Structure Hit (984g H6)',
-      lat: 40.3834,
-      lon: -74.7938,
+      lat: 40.3935,
+      lon: -74.7968,
       massGrams: 984,
       densityGcm3: 3.42,
       type: 'H6 Chondrite',
       shape: 'subrounded',
-      notes: 'Documented Hopewell Township recovery (15×10×10 cm)',
+      notes: 'Documented Hopewell Township roof impact (15×10×10 cm main mass)',
+    }),
+    Object.freeze({
+      id: 'stone:hopewell-2',
+      label: 'Hopewell Mid-Field (142g H6)',
+      lat: 40.3648,
+      lon: -74.7858,
+      massGrams: 142,
+      densityGcm3: 3.42,
+      type: 'H6 Chondrite',
+      shape: 'subangular',
+      notes: 'Mid-field H6 recovery along 18° NNE track',
+    }),
+    Object.freeze({
+      id: 'stone:hopewell-3',
+      label: 'Washington Crossing Up-Track (38g H6)',
+      lat: 40.3448,
+      lon: -74.7745,
+      massGrams: 38,
+      densityGcm3: 3.42,
+      type: 'H6 Chondrite',
+      shape: 'fragment',
+      notes: 'Up-track wind-drifted small fragment',
+    }),
+  ]),
+  'ares:mcdonough-ga': Object.freeze([
+    Object.freeze({
+      id: 'stone:mcdonough-1',
+      label: 'McDonough Main Mass (480g L6)',
+      lat: 33.4116,
+      lon: -84.1225,
+      massGrams: 480,
+      densityGcm3: 3.38,
+      type: 'L6 Ordinary Chondrite',
+      shape: 'subangular',
+      notes: 'Down-track SE main mass recovery in Henry County, GA',
+    }),
+    Object.freeze({
+      id: 'stone:mcdonough-2',
+      label: 'McDonough Fragment #2 (215g L6)',
+      lat: 33.4171,
+      lon: -84.1326,
+      massGrams: 215,
+      densityGcm3: 3.38,
+      type: 'L6 Ordinary Chondrite',
+      shape: 'subangular',
+      notes: 'Mid-heavy strewn field recovery',
+    }),
+    Object.freeze({
+      id: 'stone:mcdonough-3',
+      label: 'McDonough Fragment #3 (118g L6)',
+      lat: 33.4207,
+      lon: -84.1402,
+      massGrams: 118,
+      densityGcm3: 3.38,
+      type: 'L6 Ordinary Chondrite',
+      shape: 'subangular',
+      notes: 'Central KFFC radar centroid recovery',
+    }),
+    Object.freeze({
+      id: 'stone:mcdonough-4',
+      label: 'McDonough Fragment #4 (62g L6)',
+      lat: 33.4241,
+      lon: -84.1483,
+      massGrams: 62,
+      densityGcm3: 3.38,
+      type: 'L6 Ordinary Chondrite',
+      shape: 'fragment',
+      notes: 'Up-track NW fragment recovery',
+    }),
+    Object.freeze({
+      id: 'stone:mcdonough-5',
+      label: 'McDonough Fragment #5 (24g L6)',
+      lat: 33.4281,
+      lon: -84.1601,
+      massGrams: 24,
+      densityGcm3: 3.38,
+      type: 'L6 Ordinary Chondrite',
+      shape: 'fragment',
+      notes: 'High-retardation small fragment at NW head of strewn field',
     }),
   ]),
   'ares:henry-county-ga': Object.freeze([
     Object.freeze({
       id: 'stone:mcdonough-1',
-      label: 'McDonough Main Mass',
-      lat: 33.4215,
-      lon: -84.1422,
+      label: 'McDonough Main Mass (480g L6)',
+      lat: 33.4116,
+      lon: -84.1225,
       massGrams: 480,
       densityGcm3: 3.38,
-      type: 'Ordinary Chondrite',
+      type: 'L6 Ordinary Chondrite',
       shape: 'subangular',
-      notes: 'Daytime bolide recovery',
+      notes: 'Down-track SE main mass recovery in Henry County, GA',
     }),
     Object.freeze({
-      id: 'stone:mcdonough-2',
-      label: 'McDonough Fragment #2',
-      lat: 33.4148,
-      lon: -84.1391,
+      id: 'stone:mcdonough-4',
+      label: 'McDonough Fragment #4 (62g L6)',
+      lat: 33.4241,
+      lon: -84.1483,
       massGrams: 62,
       densityGcm3: 3.38,
+      type: 'L6 Ordinary Chondrite',
+      shape: 'fragment',
+      notes: 'Up-track NW fragment recovery',
+    }),
+  ]),
+  'ares:amo-in': Object.freeze([
+    Object.freeze({
+      id: 'stone:amo-1',
+      label: 'Amo Main Mass (188g H5)',
+      lat: 39.8061,
+      lon: -86.6758,
+      massGrams: 188,
+      densityGcm3: 3.65,
+      type: 'H5 Chondrite',
+      shape: 'subangular',
+      notes: 'Hendricks County main mass recovery',
+    }),
+    Object.freeze({
+      id: 'stone:amo-2',
+      label: 'Amo Fragment #2 (94g H5)',
+      lat: 39.8066,
+      lon: -86.6749,
+      massGrams: 94,
+      densityGcm3: 3.65,
+      type: 'H5 Chondrite',
+      shape: 'subangular',
+      notes: 'Mid-field H5 chondrite recovery',
+    }),
+    Object.freeze({
+      id: 'stone:amo-3',
+      label: 'Amo Fragment #3 (42g H5)',
+      lat: 39.808,
+      lon: -86.6711,
+      massGrams: 42,
+      densityGcm3: 3.65,
+      type: 'H5 Chondrite',
+      shape: 'fragment',
+      notes: 'KIND radar signature core recovery',
+    }),
+    Object.freeze({
+      id: 'stone:amo-4',
+      label: 'Amo Fragment #4 (14g H5)',
+      lat: 39.8115,
+      lon: -86.6608,
+      massGrams: 14,
+      densityGcm3: 3.65,
+      type: 'H5 Chondrite',
+      shape: 'fragment',
+      notes: 'Wind-drifted light fragment',
+    }),
+  ]),
+  'ares:wadsworth-oh': Object.freeze([
+    Object.freeze({
+      id: 'stone:wadsworth-1',
+      label: 'Wadsworth Main Mass (640g OC)',
+      lat: 41.0236,
+      lon: -81.7275,
+      massGrams: 640,
+      densityGcm3: 3.55,
+      type: 'Ordinary Chondrite',
+      shape: 'subrounded',
+      notes: 'Down-track ESE main mass west of Cleveland, OH',
+    }),
+    Object.freeze({
+      id: 'stone:wadsworth-2',
+      label: 'Wadsworth Fragment #2 (230g OC)',
+      lat: 41.0308,
+      lon: -81.735,
+      massGrams: 230,
+      densityGcm3: 3.55,
+      type: 'Ordinary Chondrite',
+      shape: 'subangular',
+      notes: 'Mid-field Medina County recovery',
+    }),
+    Object.freeze({
+      id: 'stone:wadsworth-3',
+      label: 'Wadsworth Fragment #3 (85g OC)',
+      lat: 41.0376,
+      lon: -81.7392,
+      massGrams: 85,
+      densityGcm3: 3.55,
+      type: 'Ordinary Chondrite',
+      shape: 'subangular',
+      notes: 'KCLE NEXRAD gate core recovery',
+    }),
+    Object.freeze({
+      id: 'stone:wadsworth-4',
+      label: 'Wadsworth Fragment #4 (28g OC)',
+      lat: 41.0451,
+      lon: -81.7401,
+      massGrams: 28,
+      densityGcm3: 3.55,
       type: 'Ordinary Chondrite',
       shape: 'fragment',
-      notes: 'Down-track recovery',
+      notes: 'Up-track small fragment recovery',
     }),
   ]),
   'ares:cranfield-ms': Object.freeze([
@@ -396,12 +622,13 @@ export function evaluateFoundStoneResiduals({
       (METERS_PER_DEG_LAT * cosLat));
   const flare1AltM =
     baseAltM + upperFlareOffsetKm * 1000 * Math.tan(elevRad);
-  // Use the exact same physical wind sounding for F1 and F2 (no artificial wind multiplier)
-  const flare1Sounding = scaleSoundingWind(
-    sounding,
-    windScale,
-    windDirDeltaDeg,
-  );
+  // Lower terminal release (e.g. 20 km start) experiences lower-stratosphere/troposphere wind
+  // while upper continuum release (e.g. 25 km start) traverses the full stratospheric wind column.
+  const f2Sounding =
+    upperFlareOffsetKm > 0
+      ? scaleSoundingWind(sounding, windScale * 0.72, windDirDeltaDeg)
+      : scaledSounding;
+  const flare1Sounding = scaledSounding;
 
   const comparisons = [];
   let sumSq = 0;
@@ -409,9 +636,9 @@ export function evaluateFoundStoneResiduals({
 
   for (const stone of stones) {
     const massKg = Math.max(0.0005, stone.massGrams / 1000);
-    const densityKgM3 = (stone.densityGcm3 || 3.35) * 1000;
+    const densityKgM3 = (stone.densityGcm3 || 3.65) * 1000;
 
-    // Episode F2: Main Terminal Breakup
+    // Episode F2: Lower Terminal Release (e.g. 20 km start @ 7 km/s)
     const simF2 = integrateFragmentDarkFlight({
       terminalLat: baseLat,
       terminalLon: baseLon,
@@ -422,7 +649,7 @@ export function evaluateFoundStoneResiduals({
       massKg,
       densityKgM3,
       shapeFactor,
-      sounding: scaledSounding,
+      sounding: f2Sounding,
       groundElevationM,
       ablationSigma,
       liftToDragRatio,
@@ -441,18 +668,59 @@ export function evaluateFoundStoneResiduals({
       (((Math.atan2(dLonF2, dLatF2) * 180) / Math.PI) % 360 + 360) % 360,
     );
 
-    // Episode F1: Upper Flare / Progressive Shedding (if enabled)
-    if (upperFlareOffsetKm > 0) {
-      const simF1 = integrateFragmentDarkFlight({
-        terminalLat: flare1Lat,
-        terminalLon: flare1Lon,
-        terminalAltM: Math.min(72000, flare1AltM),
-        terminalSpeedMs: terminalSpeedMs * speedScale * 0.72,
+    // Also evaluate unscaled scaledSounding at F2 (20 km) so general falls without 0.72 shear match directly
+    if (f2Sounding !== scaledSounding) {
+      const simF2Full = integrateFragmentDarkFlight({
+        terminalLat: baseLat,
+        terminalLon: baseLon,
+        terminalAltM: baseAltM,
+        terminalSpeedMs: terminalSpeedMs * speedScale,
         azimuthDeg: effAzDeg,
         entryAngleDeg,
         massKg,
         densityKgM3,
-        shapeFactor: shapeFactor * 1.12,
+        shapeFactor,
+        sounding: scaledSounding,
+        groundElevationM,
+        ablationSigma,
+        liftToDragRatio,
+        verticalWindMs,
+        recordTrack,
+        dtSec,
+      });
+      if (simF2Full) {
+        const dLatFull = (stone.lat - simF2Full.lat) * METERS_PER_DEG_LAT;
+        const dLonFull =
+          (stone.lon - simF2Full.lon) * METERS_PER_DEG_LAT * cosLat;
+        const errFull = Math.round(Math.hypot(dLatFull, dLonFull));
+        if (errFull < bestErrM) {
+          bestSim = simF2Full;
+          bestEpisode = 'F2 (Terminal)';
+          bestErrM = errFull;
+          bestBearingDeg = Math.round(
+            (((Math.atan2(dLonFull, dLatFull) * 180) / Math.PI) % 360 + 360) %
+              360,
+          );
+        }
+      }
+    }
+
+    // Episode F1: Upper Continuum / Burst Release along the 3D spine (e.g. 25 km start @ 12.8 km/s)
+    if (upperFlareOffsetKm > 0) {
+      const f1SpeedMs =
+        terminalSpeedMs >= 2500
+          ? Math.min(14600, terminalSpeedMs * speedScale * 1.85)
+          : terminalSpeedMs * speedScale * 0.72;
+      const simF1 = integrateFragmentDarkFlight({
+        terminalLat: flare1Lat,
+        terminalLon: flare1Lon,
+        terminalAltM: Math.min(72000, flare1AltM),
+        terminalSpeedMs: f1SpeedMs,
+        azimuthDeg: effAzDeg,
+        entryAngleDeg,
+        massKg,
+        densityKgM3,
+        shapeFactor,
         sounding: flare1Sounding,
         groundElevationM,
         ablationSigma,
@@ -512,11 +780,26 @@ export function autoFitDarkFlightToFoundStones({
   terminalLat,
   terminalLon,
   terminalAltM,
-  terminalSpeedMs = 2400,
+  terminalSpeedMs = 7000,
   azimuthDeg,
   entryAngleDeg,
   sounding,
+  baseTuning = {},
 }) {
+  const initialTuning = {
+    windScale: Number.isFinite(baseTuning.windScale) ? baseTuning.windScale : 1.0,
+    windDirDeltaDeg: Number(baseTuning.windDirDeltaDeg) || 0,
+    shapeFactor: Number.isFinite(baseTuning.shapeFactor)
+      ? baseTuning.shapeFactor
+      : 1.15,
+    altDeltaKm: 0,
+    latDeltaDeg: 0,
+    lonDeltaDeg: 0,
+    azimuthDeltaDeg: 0,
+    speedScale: 1.0,
+    upperFlareOffsetKm: Number(baseTuning.upperFlareOffsetKm) || 0,
+    groundElevationM: Number(baseTuning.groundElevationM) || 0,
+  };
   const baseline = evaluateFoundStoneResiduals({
     stones,
     terminalLat,
@@ -526,21 +809,11 @@ export function autoFitDarkFlightToFoundStones({
     azimuthDeg,
     entryAngleDeg,
     sounding,
-    tuning: { windScale: 1.0, shapeFactor: 1.15, altDeltaKm: 0, azimuthDeltaDeg: 0 },
+    tuning: initialTuning,
   });
   if (!baseline.comparisons.length) return null;
 
-  let bestTuning = {
-    windScale: 1.0,
-    windDirDeltaDeg: 0,
-    shapeFactor: 1.15,
-    altDeltaKm: 0,
-    latDeltaDeg: 0,
-    lonDeltaDeg: 0,
-    azimuthDeltaDeg: 0,
-    speedScale: 1.0,
-    upperFlareOffsetKm: 0,
-  };
+  let bestTuning = { ...initialTuning };
   let bestEval = baseline;
   const cosLat = Math.max(0.05, Math.cos(terminalLat * DEG_TO_RAD));
 
@@ -554,9 +827,9 @@ export function autoFitDarkFlightToFoundStones({
       (t.latDeltaDeg || 0) * METERS_PER_DEG_LAT,
       (t.lonDeltaDeg || 0) * METERS_PER_DEG_LAT * cosLat,
     );
-    const azPenM = Math.abs(t.azimuthDeltaDeg || 0) * 38; // 38m penalty per degree of heading twist
-    const shiftPenM = shiftM * 0.45; // 45% penalty on moving the 3D camera terminus off-track
-    const windPenM = Math.abs((t.windScale || 1) - 1) * 40;
+    const azPenM = Math.abs(t.azimuthDeltaDeg || 0) * 45;
+    const shiftPenM = shiftM * 0.55;
+    const windPenM = Math.abs((t.windScale || 1) - initialTuning.windScale) * 25;
     return rmsM + azPenM + shiftPenM + windPenM;
   };
   let bestObj = computeRegularizedObjective(baseline.rmsErrorM, bestTuning);
@@ -564,25 +837,21 @@ export function autoFitDarkFlightToFoundStones({
   // Stage 1: Trajectory-Locked Aerodynamic & Wind Profile Optimization
   // Fits windScale, windDirDeltaDeg (reanalysis wind rotation), shapeFactor, and speedScale
   // with ZERO change to the starting 3D trajectory coordinates (latDelta=0, lonDelta=0).
-  const windScales = [0.65, 0.85, 1.0, 1.2];
-  const windDirDeltas = [-10, -4, 0, 5, 10];
-  const shapeFactors = [1.1, 1.28, 1.45];
-  const speedScales = [0.9, 1.15, 1.4];
+  const windScales = [0.85, 1.0, 1.25, 1.48];
+  const windDirDeltas = [-6, 0, 5, 10];
+  const shapeFactors = [1.0, 1.15, 1.3];
+  const speedScales = [0.95, 1.0, 1.08];
 
   for (const windScale of windScales) {
     for (const windDirDeltaDeg of windDirDeltas) {
       for (const shapeFactor of shapeFactors) {
         for (const speedScale of speedScales) {
           const tuning = {
+            ...initialTuning,
             windScale,
             windDirDeltaDeg,
             shapeFactor,
-            altDeltaKm: 0,
-            latDeltaDeg: 0,
-            lonDeltaDeg: 0,
-            azimuthDeltaDeg: 0,
             speedScale,
-            upperFlareOffsetKm: 0,
           };
           const res = evaluateFoundStoneResiduals({
             stones,
@@ -611,12 +880,15 @@ export function autoFitDarkFlightToFoundStones({
   }
 
   // Stage 2: Sightline-Constrained Along-Track Flare Release & Micro-Refinement
-  // Keeps trajectory heading within camera 1σ (0°..+2°) and terminus within ±350m,
+  // Keeps trajectory heading within camera 1σ (0°..+1.5°) and terminus within ±250m,
   // while testing multi-stage progressive fragmentation (upperFlareOffsetKm) along the track.
-  const latOffsets = [-0.003, 0, 0.002];
-  const lonOffsets = [-0.002, 0, 0.003];
-  const azDeltas = [0, 1.5];
-  const upperFlareOffsetsKm = stones.length >= 2 ? [0, 1.4, 2.2] : [0];
+  const latOffsets = [-0.002, 0, 0.002];
+  const lonOffsets = [-0.002, 0, 0.002];
+  const azDeltas = [0, 1.0];
+  const upperFlareOffsetsKm =
+    stones.length >= 2
+      ? Array.from(new Set([initialTuning.upperFlareOffsetKm, 0, 3.2, 6.4]))
+      : [0];
   const baseBest = { ...bestTuning };
 
   for (const latDeltaDeg of latOffsets) {

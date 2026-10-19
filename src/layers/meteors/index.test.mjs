@@ -823,13 +823,13 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     };
 
     const stones = getFoundStonesForEvent(simsEvent);
-    assert.equal(stones.length, 6);
+    assert.equal(stones.length, 11);
 
     const baselineDf = runMultiModelDarkFlight(simsEvent, sampleSounding, {
       nFragments: 40,
       autoFit: false,
     });
-    assert.equal(baselineDf.stoneFit.comparisons.length, 6);
+    assert.equal(baselineDf.stoneFit.comparisons.length, 11);
     assert.ok(Number.isFinite(baselineDf.stoneFit.baselineRmsM));
 
     const fittedDf = runMultiModelDarkFlight(simsEvent, sampleSounding, {
@@ -933,7 +933,7 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     });
     assert.ok(df.validation);
     assert.ok(df.validation.overUnder);
-    assert.equal(df.validation.overUnder.recoveredFloor.stoneCount, 6);
+    assert.equal(df.validation.overUnder.recoveredFloor.stoneCount, 11);
     assert.ok(
       df.validation.overUnder.under1Sigma.totalYieldKg <
         df.validation.overUnder.consensusMedian.totalYieldKg,
@@ -1285,10 +1285,10 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
       autoFit: true,
     });
     assert.equal(df.subBolides.length, 2);
-    assert.equal(df.subBolides[0].altKm, 61.5);
-    assert.equal(df.subBolides[1].altKm, 45.5);
-    // F1 (61.5 km) must be ~24 km up-range (south) of F2 (45.5 km) along the trajectory ray
-    assert.ok(df.subBolides[0].lat < df.subBolides[1].lat - 0.15);
+    assert.equal(df.subBolides[0].altKm, 41.4);
+    assert.equal(df.subBolides[1].altKm, 31.7);
+    // F1 (41.4 km) must be ~12.4 km up-range (south) of F2 (31.7 km) along the trajectory ray
+    assert.ok(df.subBolides[0].lat < df.subBolides[1].lat - 0.1);
     // Regularized auto-fit keeps terminus shift within camera 1σ (<= 450m)
     assert.ok(df.stoneFit.terminusShiftM <= 450);
 
@@ -1321,5 +1321,62 @@ describe('Stage 4: Historical Upper-Air Wind Sounding, 3-Model Dark Flight & Zon
     assert.ok(ml);
     assert.equal(ml.stationCount, 3);
     assert.ok(ml.seismicBurstAltKm >= 24 && ml.seismicBurstAltKm <= 58);
+  });
+
+  it('19. cross-validates universal 3D spine, mass-sorted retardation knees, and multi-stone strewn fields across Sims Corner WA, Hopewell NJ, McDonough GA, Amo IN, and Wadsworth OH, plus Field-Hunter KMZ audit', async () => {
+    const aresEvents = buildAresFallEvents();
+    const benchmarkIds = [
+      'ares:sims-corner-wa',
+      'ares:hopewell-nj',
+      'ares:mcdonough-ga',
+      'ares:amo-in',
+      'ares:wadsworth-oh',
+    ];
+
+    for (const id of benchmarkIds) {
+      const ev = aresEvents.find((e) => e.id === id);
+      assert.ok(ev, `Missing ARES fall ${id}`);
+      assert.ok(Number.isFinite(ev.trajectory.azimuth), `${id} missing azimuth`);
+      assert.ok(Number.isFinite(ev.trajectory.entryAngle), `${id} missing entryAngle`);
+
+      const df = runMultiModelDarkFlight(ev, sampleSounding, {
+        allEvents: aresEvents,
+        nFragments: 32,
+        autoFit: true,
+      });
+      assert.equal(df.regime, 'full-3d-strewn-field', `${id} should be full-3d-strewn-field`);
+      assert.ok(df.subBolides.length >= 2, `${id} should have >=2 bolides on 3D spine`);
+      assert.equal(df.massSweep.length, 7, `${id} should have 7 canonical mass tracks`);
+
+      // Verify mass-sorted retardation knees: 1kg punches deeper (lower altKm) than 3g
+      const knee1kg = df.massSweep.find((m) => m.massKg === 1.0)?.retardationKnee;
+      const knee3g = df.massSweep.find((m) => m.massKg === 0.003)?.retardationKnee;
+      assert.ok(knee1kg && knee3g, `${id} missing retardationKnee on 1kg or 3g`);
+      assert.ok(
+        knee1kg.altKm < knee3g.altKm,
+        `${id}: 1kg knee (${knee1kg.altKm} km) must be deeper than 3g knee (${knee3g.altKm} km)`,
+      );
+
+      // Verify documented found stones and auto-fit convergence
+      assert.ok(df.foundStones.length >= 3, `${id} should have >=3 documented found stones`);
+      assert.ok(df.stoneFit, `${id} should produce stoneFit`);
+      assert.ok(
+        df.stoneFit.bestRmsM <= df.stoneFit.baselineRmsM,
+        `${id} autoFit RMS (${df.stoneFit.bestRmsM}m) should improve or match baseline (${df.stoneFit.baselineRmsM}m)`,
+      );
+    }
+
+    // Verify Field-Hunter KMZ Audit on Sims Corner
+    const sims = aresEvents.find((e) => e.id === 'ares:sims-corner-wa');
+    const simsDf = runMultiModelDarkFlight(sims, sampleSounding, {
+      allEvents: aresEvents,
+      nFragments: 16,
+      autoFit: false,
+    });
+    const kmzAudit = simsDf.validation?.nasaAudit?.fieldHunterKmzAudit;
+    assert.ok(kmzAudit, 'Missing fieldHunterKmzAudit on Sims Corner');
+    assert.equal(kmzAudit.empiricalAssetsConfirmed.length, 4);
+    assert.equal(kmzAudit.modelDiscrepanciesFound.length, 4);
+    assert.match(kmzAudit.summary, /Field-Hunter KMZ Audit/);
   });
 });
