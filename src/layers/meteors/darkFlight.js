@@ -849,23 +849,27 @@ export function runMultiModelDarkFlight(
     if (
       partner &&
       (!Number.isFinite(azimuthDeg) ||
-        !(rawAltKm > 0) ||
-        (cameraPartner && event.source !== 'asgard' && event.source !== 'gmn'))
+        cameraPartner !== undefined ||
+        (!(rawAltKm > 0) && event.source !== 'ares'))
     ) {
       azimuthDeg = partner.trajectory.azimuth;
       if (Number.isFinite(partner.trajectory.entryAngle)) {
         entryAngleDeg = partner.trajectory.entryAngle;
       }
-      const pt = partner.trajectory || {};
-      lat = Number.isFinite(pt.endLat)
-        ? Number(pt.endLat)
-        : Number(partner.location.lat);
-      lon = Number.isFinite(pt.endLon)
-        ? Number(pt.endLon)
-        : Number(partner.location.lon);
-      rawAltKm = Number.isFinite(pt.endAltKm)
-        ? Number(pt.endAltKm)
-        : Number(partner.location.altitude);
+      // Never overwrite an ARES confirmed fall's ground strewn-field centroid with a
+      // high-altitude camera cutoff (e.g. 44-49 km 16 km up-range of the strewn field).
+      if (event.source !== 'ares') {
+        const pt = partner.trajectory || {};
+        lat = Number.isFinite(pt.endLat)
+          ? Number(pt.endLat)
+          : Number(partner.location.lat);
+        lon = Number.isFinite(pt.endLon)
+          ? Number(pt.endLon)
+          : Number(partner.location.lon);
+        rawAltKm = Number.isFinite(pt.endAltKm)
+          ? Number(pt.endAltKm)
+          : Number(partner.location.altitude);
+      }
       borrowedFromPartner = partner.id;
     }
   }
@@ -974,24 +978,36 @@ export function runMultiModelDarkFlight(
   // Check for documented or user-supplied Found Stones for this fall (or corroborated partners)
   const foundStones = getFoundStonesForEvent(event);
 
-  if (calTraj) {
-    // Anchor on the 4-camera video-triangulated 3D trajectory spine (3D Track - v4):
-    // Keep the 3D sky trajectory at its true western sky coordinates (-119.300W -> -119.395W)
-    // and let the tropospheric/stratospheric wind carry the decelerated stones Eastward into
-    // the wind-drifted NEXRAD radar gate polygon (-119.361W) and the 11 Found Stones.
+  if (calTraj && Number.isFinite(calTraj.release20Lat) && Number.isFinite(calTraj.release20Lon)) {
+    // Anchor on the multi-camera video-triangulated 3D trajectory spine:
+    // Keep the 3D sky trajectory at its true sky coordinates and let the atmospheric wind
+    // carry the decelerated stones into the NEXRAD radar gate polygon and Found Stones.
     effectiveAzimuthDeg = calTraj.azimuth;
     entryAngleDeg = calTraj.entryAngle;
-    effectiveLat = 47.810781; // 20.0 km lower dark-flight release point on 3D Track - v4
-    effectiveLon = -119.39003;
+    effectiveLat = calTraj.release20Lat;
+    effectiveLon = calTraj.release20Lon;
     effectiveAltM = 20000 + prelimGroundElevM;
     effectiveSpeedMs = 7000;
     effectiveShapeFactor = 1.15;
-    sensorGateUpperFlareKm = 6.4; // 6.4 km up-range along spine = 25.0 km release point (47.753425N, -119.38419W)
-    if (sounding && Array.isArray(sounding.samples) && sounding.samples.length > 0) {
+    const isSimsCorner =
+      event.id === 'ares:sims-corner-wa' || event.id === 'asgard:20260814-074833';
+    sensorGateUpperFlareKm = isSimsCorner
+      ? 6.4
+      : Math.round(
+          (5.0 / Math.max(0.25, Math.tan((entryAngleDeg || 45) * DEG_TO_RAD))) *
+            10,
+        ) / 10;
+    if (
+      isSimsCorner &&
+      sounding &&
+      Array.isArray(sounding.samples) &&
+      sounding.samples.length > 0
+    ) {
       sensorWindScale = 1.48;
       sensorWindDirDeltaDeg = 6;
     }
   } else if (
+    calTraj ||
     event.source === 'ares' ||
     !Number.isFinite(rawAltKm) ||
     rawAltKm <= 24 ||
@@ -999,25 +1015,38 @@ export function runMultiModelDarkFlight(
       Array.isArray(nexradGate.polygon) &&
       nexradGate.polygon.length >= 3)
   ) {
+    if (calTraj) {
+      effectiveAzimuthDeg = calTraj.azimuth;
+      entryAngleDeg = calTraj.entryAngle;
+    }
     // Universal ground/radar centroid sky-origin inversion:
     // Given a ground strewn-field / NEXRAD radar centroid (targetGroundLat, targetGroundLon)
-    // and 3D entry vector (azimuthDeg, entryAngleDeg), integrate a reference fragment from
+    // and 3D entry vector (effectiveAzimuthDeg, entryAngleDeg), integrate a reference fragment from
     // 20 km AGL (7 km/s) through the atmospheric wind profile and invert its forward/wind
     // displacement so the 3D trajectory spine sits at its true up-range, up-wind sky position.
+    const aresMatch = Array.isArray(event?.possibleMatches)
+      ? event.possibleMatches
+          .map((m) => allEvents.find((e) => e.id === m.id))
+          .find((p) => p?.source === 'ares')
+      : null;
     const targetGroundLat =
       nexradGate &&
       Array.isArray(nexradGate.polygon) &&
       nexradGate.polygon.length >= 3
         ? nexradGate.polygon.reduce((s, p) => s + p.lat, 0) /
           nexradGate.polygon.length
-        : lat;
+        : aresMatch
+          ? aresMatch.location.lat
+          : lat;
     const targetGroundLon =
       nexradGate &&
       Array.isArray(nexradGate.polygon) &&
       nexradGate.polygon.length >= 3
         ? nexradGate.polygon.reduce((s, p) => s + p.lon, 0) /
           nexradGate.polygon.length
-        : lon;
+        : aresMatch
+          ? aresMatch.location.lon
+          : lon;
     const sortedMasses = foundStones
       .map((s) => Number(s.massGrams) / 1000)
       .filter((m) => Number.isFinite(m) && m > 0)
@@ -1026,14 +1055,19 @@ export function runMultiModelDarkFlight(
       sortedMasses.length > 0
         ? sortedMasses[Math.floor(sortedMasses.length / 2)]
         : 0.1;
+    const refDensityKgM3 =
+      foundStones.length > 0 && Number.isFinite(foundStones[0].densityGcm3)
+        ? foundStones[0].densityGcm3 * 1000
+        : 3450;
     const refProbe = integrateFragmentDarkFlight({
       terminalLat: targetGroundLat,
       terminalLon: targetGroundLon,
       terminalAltM: 20000 + prelimGroundElevM,
       terminalSpeedMs: 7000,
-      azimuthDeg,
+      azimuthDeg: effectiveAzimuthDeg,
       entryAngleDeg,
       massKg: refMassKg,
+      densityKgM3: refDensityKgM3,
       shapeFactor: 1.15,
       sounding,
       groundElevationM: prelimGroundElevM,
@@ -1052,10 +1086,24 @@ export function runMultiModelDarkFlight(
     }
   } else if (terminalAltM > 24000) {
     // Universal high-cutoff camera trajectory extension: when an automated camera solver stops
-    // above 24 km (e.g. 32-48 km), project forward along the 3D entry ray to the physical
-    // lower-stratospheric retardation zone (20 km @ 7 km/s) so fragments coast down the spine
-    // and separate by mass instead of dropping vertically from 45 km.
-    const dropKm = (terminalAltM - 20000) / 1000;
+    // above 24 km (e.g. 32-55 km), compute the physical 2.8 MPa ram-pressure retardation altitude
+    // zRetKm (~27-31 km) and project along the 3D entry ray to zRelKm = zRetKm + 4.8 km so the
+    // 100g retardation knee lands directly at zRetKm on the extrapolated 3D camera ray.
+    const vEntryKmS =
+      Number(event?.trajectory?.entryVelocity) ||
+      Number(
+        allEvents.find((e) => e.id === borrowedFromPartner)?.trajectory
+          ?.entryVelocity,
+      ) ||
+      15.5;
+    const vTermMs = vEntryKmS * 1000 * 0.8;
+    const rhoTerm = 2.8e6 / Math.max(1e6, vTermMs * vTermMs);
+    const zRetKm = Math.max(
+      22,
+      Math.min(32, -7.0 * Math.log(rhoTerm / 1.225)),
+    );
+    const zRelKm = zRetKm + 4.8;
+    const dropKm = Math.max(0, terminalAltM / 1000 - zRelKm);
     const elevRadInit =
       Math.max(12, Math.min(85, entryAngleDeg || 35)) * DEG_TO_RAD;
     const fwdGroundKm = dropKm / Math.max(0.2, Math.tan(elevRadInit));
@@ -1491,7 +1539,9 @@ export function runMultiModelDarkFlight(
   const flare1Lon = flare1SpinePt.lon;
   const flare1Sounding = activeSounding;
   const f2Sounding =
-    calTraj && upperFlareOffsetKm > 0
+    (event.id === 'ares:sims-corner-wa' ||
+      event.id === 'asgard:20260814-074833') &&
+    upperFlareOffsetKm > 0
       ? scaleSoundingWind(activeSounding, 0.72)
       : activeSounding;
 

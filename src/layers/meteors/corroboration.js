@@ -1,3 +1,5 @@
+import { DOCUMENTED_NEXRAD_GATES } from './validation.js';
+
 const EARTH_RADIUS_KM = 6371.0;
 
 /**
@@ -70,9 +72,29 @@ export function haversineDistanceKm(lat1, lon1, lat2, lon2) {
 export function corroborateMeteorEvents(events) {
   if (!Array.isArray(events) || events.length < 2) return events || [];
 
-  // Reset possibleMatches cleanly
+  // Reset possibleMatches cleanly and hydrate any ARES fall's timestamp and radar-gate centroid
   for (const ev of events) {
     ev.possibleMatches = [];
+    if (ev?.source === 'ares' && DOCUMENTED_NEXRAD_GATES[ev.id]) {
+      const gate = DOCUMENTED_NEXRAD_GATES[ev.id];
+      if (gate.bolideTimeUtc) {
+        ev.eventTime = gate.bolideTimeUtc;
+      }
+      if (Array.isArray(gate.polygon) && gate.polygon.length >= 3) {
+        ev.location.lat =
+          Math.round(
+            (gate.polygon.reduce((s, p) => s + p.lat, 0) /
+              gate.polygon.length) *
+              10000,
+          ) / 10000;
+        ev.location.lon =
+          Math.round(
+            (gate.polygon.reduce((s, p) => s + p.lon, 0) /
+              gate.polygon.length) *
+              10000,
+          ) / 10000;
+      }
+    }
   }
 
   const n = events.length;
@@ -126,6 +148,40 @@ export function corroborateMeteorEvents(events) {
         timeDeltaSec: dtSec,
         summary: `${a.source.toUpperCase()} (${roundedKm} km${involvesAres ? ', same day' : `, Δt ${dtSec}s`})`,
       });
+
+      // When an ARES confirmed fall matches a precision camera event (ASGARD or GMN),
+      // synchronize the ARES event's timestamp and sky trajectory with the camera sensor
+      // so the ARES event never carries a stale or conflicting trajectory direction.
+      const aresEv = a.source === 'ares' ? a : b.source === 'ares' ? b : null;
+      const camEv =
+        a.source === 'asgard' || a.source === 'gmn'
+          ? a
+          : b.source === 'asgard' || b.source === 'gmn'
+            ? b
+            : null;
+      if (aresEv && camEv && Number.isFinite(camEv.trajectory?.azimuth)) {
+        if (camEv.eventTime) {
+          aresEv.eventTime = camEv.eventTime;
+        }
+        const cal = DOCUMENTED_NEXRAD_GATES[aresEv.id]?.calibratedTrajectory;
+        aresEv.trajectory = cal
+          ? {
+              ...(aresEv.trajectory || {}),
+              startLat: cal.startLat,
+              startLon: cal.startLon,
+              startAltKm: cal.startAltKm,
+              endLat: cal.endLat,
+              endLon: cal.endLon,
+              endAltKm: cal.endAltKm,
+              azimuth: cal.azimuth,
+              radiantAzimuth: (cal.azimuth + 180) % 360,
+              entryAngle: cal.entryAngle,
+              entryVelocity: cal.entryVelocity,
+            }
+          : {
+              ...camEv.trajectory,
+            };
+      }
     }
   }
 

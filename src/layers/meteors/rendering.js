@@ -117,17 +117,20 @@ export function createRendering({ layerState, services, components, config }) {
       const item = layerState._horizonItems[i];
       for (let j = 0; j < item.points.length; j++) {
         const { entity, position } = item.points[j];
-        const show = pointOccluder.isPointVisible(position) === true;
+        const show =
+          !entity._hiddenByDarkFlight &&
+          pointOccluder.isPointVisible(position) === true;
         if (entity.show !== show) {
           entity.show = show;
           changed = true;
         }
       }
       if (!item.shapes.length || !item.sphere) continue;
-      const showShapes =
+      const sphereVis =
         sphereOccluder.isBoundingSphereVisible(item.sphere) === true;
       for (let j = 0; j < item.shapes.length; j++) {
         const shapeEntity = item.shapes[j];
+        const showShapes = sphereVis && !shapeEntity._hiddenByDarkFlight;
         if (shapeEntity.show !== showShapes) {
           shapeEntity.show = showShapes;
           changed = true;
@@ -309,6 +312,7 @@ export function createRendering({ layerState, services, components, config }) {
     layerState._darkFlightEntities = [];
     if (Array.isArray(layerState._hiddenByDarkFlight)) {
       for (const ent of layerState._hiddenByDarkFlight) {
+        ent._hiddenByDarkFlight = false;
         ent.show = true;
       }
       layerState._hiddenByDarkFlight = [];
@@ -331,7 +335,7 @@ export function createRendering({ layerState, services, components, config }) {
     const mode = layerState._darkFlightMode || 'all';
     const isZone = df.regime === 'zone-of-possibility';
 
-    // Hide duplicate uncalibrated partner sky vectors/tethers while calibrated Dark Flight
+    // Hide duplicate uncalibrated partner sky vectors/tethers/pins while calibrated Dark Flight
     // spine is active so there are never two competing entry trajectory arrows in the sky.
     const selEvForHide = layerState._events.find((e) => e.id === df.eventId);
     const partnerIdsToHide = new Set([
@@ -341,9 +345,14 @@ export function createRendering({ layerState, services, components, config }) {
     ].filter(Boolean));
     layerState._hiddenByDarkFlight = [];
     for (const pid of partnerIdsToHide) {
-      for (const suffix of [':vector', ':tether']) {
+      const suffixes =
+        pid === df.eventId
+          ? [':vector', ':tether']
+          : ['', ':ground', ':vector', ':tether'];
+      for (const suffix of suffixes) {
         const ent = layerState._dataSource.entities.getById(`${pid}${suffix}`);
-        if (ent && ent.show !== false) {
+        if (ent) {
+          ent._hiddenByDarkFlight = true;
           ent.show = false;
           layerState._hiddenByDarkFlight.push(ent);
         }

@@ -370,9 +370,76 @@ const SIMS_CORNER_NEXRAD_AND_TRACK = Object.freeze({
   ]),
 });
 
+const MCDONOUGH_NEXRAD_AND_TRACK = Object.freeze({
+  station: 'KFFC (Atlanta, GA) / KOHX (Nashville, TN) + KATL TDWR',
+  gateTimeUtc: '2025-06-26T16:26:12Z',
+  bolideTimeUtc: '2025-06-26T16:24:57Z',
+  elapsedSec: 75,
+  gateAltitudeKm: 13.896,
+  gateAltitudeMarginKm: 0.65,
+  beamWidthDeg: 0.95,
+  reflectivityDbz: 34.5,
+  flareAltitudesKm: [44.0, 32.6],
+  skyReturnLat: 33.402,
+  skyReturnLon: -84.195,
+  polygon: Object.freeze([
+    Object.freeze({ lat: 33.4018, lon: -84.2155 }),
+    Object.freeze({ lat: 33.4018, lon: -84.184 }),
+    Object.freeze({ lat: 33.3845, lon: -84.184 }),
+    Object.freeze({ lat: 33.3845, lon: -84.2155 }),
+  ]),
+});
+
+const WADSWORTH_NEXRAD_AND_TRACK = Object.freeze({
+  station: 'KCLE (Cleveland, OH) / KILN (Wilmington, OH)',
+  gateTimeUtc: '2026-03-17T12:58:50Z',
+  bolideTimeUtc: '2026-03-17T12:56:42Z',
+  elapsedSec: 128,
+  gateAltitudeKm: 10.6,
+  gateAltitudeMarginKm: 0.6,
+  beamWidthDeg: 0.95,
+  reflectivityDbz: 31.0,
+  flareAltitudesKm: [49.0, 30.1],
+  skyReturnLat: 41.055,
+  skyReturnLon: -81.795,
+  polygon: Object.freeze([
+    Object.freeze({ lat: 41.055, lon: -81.755 }),
+    Object.freeze({ lat: 41.055, lon: -81.712 }),
+    Object.freeze({ lat: 40.995, lon: -81.712 }),
+    Object.freeze({ lat: 40.995, lon: -81.755 }),
+  ]),
+});
+
+const COCKBURN_ISLAND_NEXRAD_AND_TRACK = Object.freeze({
+  station: 'KAPX (Gaylord, MI) / KMQT (Marquette, MI)',
+  gateTimeUtc: '2026-06-20T00:15:40Z',
+  bolideTimeUtc: '2026-06-20T00:13:58Z',
+  elapsedSec: 102,
+  gateAltitudeKm: 9.8,
+  gateAltitudeMarginKm: 0.6,
+  beamWidthDeg: 0.95,
+  reflectivityDbz: 33.0,
+  flareAltitudesKm: [36.0, 22.0],
+  skyReturnLat: 45.9329,
+  skyReturnLon: -83.3418,
+  polygon: Object.freeze([
+    Object.freeze({ lat: 45.952, lon: -83.335 }),
+    Object.freeze({ lat: 45.952, lon: -83.295 }),
+    Object.freeze({ lat: 45.922, lon: -83.295 }),
+    Object.freeze({ lat: 45.922, lon: -83.335 }),
+  ]),
+});
+
 export const DOCUMENTED_NEXRAD_GATES = Object.freeze({
   'ares:sims-corner-wa': SIMS_CORNER_NEXRAD_AND_TRACK,
   'asgard:20260814-074833': SIMS_CORNER_NEXRAD_AND_TRACK,
+  'ares:mcdonough-ga': MCDONOUGH_NEXRAD_AND_TRACK,
+  'ares:henry-county-ga': MCDONOUGH_NEXRAD_AND_TRACK,
+  'asgard:20250626-162457': MCDONOUGH_NEXRAD_AND_TRACK,
+  'ares:wadsworth-oh': WADSWORTH_NEXRAD_AND_TRACK,
+  'asgard:20260317-125642': WADSWORTH_NEXRAD_AND_TRACK,
+  'ares:cockburn-island-on': COCKBURN_ISLAND_NEXRAD_AND_TRACK,
+  'asgard:20260620-001358': COCKBURN_ISLAND_NEXRAD_AND_TRACK,
   'ares:hopewell-nj': Object.freeze({
     station: 'KDIX (Mt. Holly, NJ)',
     gateTimeUtc: '2023-05-08T16:17:10Z',

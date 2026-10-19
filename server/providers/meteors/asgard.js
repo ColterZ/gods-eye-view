@@ -28,7 +28,7 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     azimuth: 356.14,
     entryAngle: 38.55,
     entryVelocity: 14.6,
-    startAltKm: 83.2,
+    startAltKm: 77.9,
     endAltKm: 20.0,
     description:
       'Low-mass meteorite fall along WA-17 near Sims Corner & Malone Ranch (07:50:41 UTC radar gate at 10.29 km; 11 stones 9.2g–81g recovered by Anton, Roberto, Derek & Joseph).',
@@ -36,17 +36,17 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
   {
     id: 'ares:cockburn-island-on',
     name: 'Cockburn Island, Ontario',
-    lat: 45.9167,
-    lon: -83.3333,
+    lat: 45.935,
+    lon: -83.315,
     date: '2026-06-20',
-    timeUtc: '17:18:45',
-    azimuth: 64.0,
-    entryAngle: 46.0,
-    entryVelocity: 16.2,
-    startAltKm: 84.0,
-    endAltKm: 21.0,
+    timeUtc: '00:13:58',
+    azimuth: 56.0,
+    entryAngle: 73.0,
+    entryVelocity: 12.3,
+    startAltKm: 77.5,
+    endAltKm: 17.2,
     description:
-      'Daytime bolide and high-mass meteorite fall on Cockburn Island in Lake Huron.',
+      'Daytime bolide and high-mass meteorite fall on Cockburn Island in Lake Huron (Doppler radar signature 2–4 km SE of Tolsmaville).',
   },
   {
     id: 'ares:cape-cod-bay-ma',
@@ -66,31 +66,31 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
   {
     id: 'ares:houston-tx',
     name: 'Houston, TX',
-    lat: 29.7604,
-    lon: -95.3698,
+    lat: 29.941,
+    lon: -95.296,
     date: '2026-03-21',
-    timeUtc: '18:22:10',
-    azimuth: 32.0,
-    entryAngle: 49.0,
-    entryVelocity: 15.1,
-    startAltKm: 81.0,
+    timeUtc: '21:40:10',
+    azimuth: 115.0,
+    entryAngle: 50.9,
+    entryVelocity: 15.6,
+    startAltKm: 78.9,
     endAltKm: 21.5,
-    description: 'Strong daytime bolide and radar-confirmed fall signature in Texas.',
+    description: 'Strong daytime bolide and radar-confirmed fall signature in north Houston, TX.',
   },
   {
     id: 'ares:wadsworth-oh',
-    name: 'Wadsworth, OH',
+    name: 'Wadsworth, OH (Windfall / Sharon Center)',
     lat: 41.0253,
     lon: -81.7296,
     date: '2026-03-17',
-    timeUtc: '15:42:10',
-    azimuth: 112.0,
-    entryAngle: 44.0,
-    entryVelocity: 15.6,
-    startAltKm: 84.0,
+    timeUtc: '12:56:42',
+    azimuth: 159.0,
+    entryAngle: 35.7,
+    entryVelocity: 17.5,
+    startAltKm: 80.6,
     endAltKm: 20.5,
     description:
-      'Strong daytime bolide and NEXRAD-detected meteorite fall west of Cleveland, OH.',
+      'Strong daytime bolide and KCLE/KILN NEXRAD-detected eucrite achondrite meteorite fall (617g main mass) near Wadsworth / Windfall, OH.',
   },
   {
     id: 'ares:pebble-al',
@@ -112,27 +112,28 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 36.4865,
     lon: -93.451,
     date: '2025-08-17',
-    timeUtc: '09:34:15',
-    azimuth: 76.0,
-    entryAngle: 37.0,
-    entryVelocity: 16.0,
-    startAltKm: 85.0,
-    endAltKm: 21.5,
-    description: 'Long-lasting fireball and NEXRAD fall signature over northern Arkansas.',
+    timeUtc: '01:33:44',
+    azimuth: 288.0,
+    entryAngle: 18.0,
+    entryVelocity: 25.2,
+    startAltKm: 87.2,
+    endAltKm: 22.0,
+    description: 'Long-lasting shallow fireball and NEXRAD fall signature over northern Arkansas.',
   },
   {
     id: 'ares:mcdonough-ga',
-    name: 'McDonough, GA',
-    lat: 33.4215,
-    lon: -84.1422,
+    name: 'McDonough, GA (Blacksville L6 Strewn Field)',
+    lat: 33.3922,
+    lon: -84.2015,
     date: '2025-06-26',
-    timeUtc: '16:25:12',
-    azimuth: 142.0,
-    entryAngle: 48.0,
-    entryVelocity: 14.8,
-    startAltKm: 83.0,
-    endAltKm: 20.5,
-    description: 'Bright daytime bolide south of Atlanta with radar-confirmed fall and multi-stone L6 chondrite strewn field.',
+    timeUtc: '16:24:57',
+    azimuth: 233.0,
+    entryAngle: 54.6,
+    entryVelocity: 13.4,
+    startAltKm: 76.9,
+    endAltKm: 21.5,
+    description:
+      'Daytime bolide observed in 53 sweeps across 12 NEXRAD radars (KFFC/KOHX) with >129 L6 chondrite stones (5.39 kg TKW, 406.4g main mass) recovered in SW McDonough / Blacksville, GA.',
   },
   {
     id: 'ares:la-petite-belgique-qc',
@@ -221,16 +222,11 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
   {
     id: 'ares:ingalls-nc',
     name: 'Ingalls, NC',
-    lat: 35.9604,
-    lon: -80.0056,
+    lat: 35.95,
+    lon: -81.99,
     date: '2024-08-30',
-    timeUtc: '14:52:00',
-    azimuth: 132.0,
-    entryAngle: 44.0,
-    entryVelocity: 15.7,
-    startAltKm: 83.0,
-    endAltKm: 21.0,
-    description: 'Meteorite fall signature observed simultaneously on four NOAA NEXRAD radars.',
+    timeUtc: '05:15:00',
+    description: 'Meteorite fall signature observed simultaneously on four NOAA NEXRAD radars in Avery County, NC.',
   },
   {
     id: 'ares:hillsborough-nj',
@@ -238,26 +234,16 @@ export const NASA_ARES_METEORITE_FALLS = Object.freeze([
     lat: 40.5168,
     lon: -74.6156,
     date: '2024-07-16',
-    timeUtc: '15:17:00',
-    azimuth: 338.0,
-    entryAngle: 46.0,
-    entryVelocity: 16.1,
-    startAltKm: 84.0,
-    endAltKm: 21.5,
-    description: 'Daytime bolide with strewn field centered near Edison, NJ.',
+    timeUtc: '15:15:00',
+    description: 'Daytime bolide with strewn field in central New Jersey.',
   },
   {
     id: 'ares:clanton-well-az',
     name: 'Clanton Well, AZ',
-    lat: 33.5,
-    lon: -112.5,
+    lat: 33.32,
+    lon: -113.34,
     date: '2024-04-17',
-    timeUtc: '04:38:10',
-    azimuth: 45.0,
-    entryAngle: 40.0,
-    entryVelocity: 15.5,
-    startAltKm: 83.0,
-    endAltKm: 21.0,
+    timeUtc: '02:59:32',
     description: 'Prominent bolide and radar-detected fall over western Arizona.',
   },
   {
@@ -895,8 +881,12 @@ export function enrichAsgardEventFromDetailHtml(
   const inMatch =
     sizeText.match(/([\d.]+)\s*(?:in\b|inches\b|inch\b)/i) ||
     cleaned.match(/about\s+([\d.]+)\s+inches\s+in\s+diameter/i);
+  const ftMatch =
+    sizeText.match(/(?:nearly\s+|about\s+)?([\d.]+)\s*(?:ft\b|feet\b|foot\b)/i);
   if (inMatch && Number.isFinite(Number(inMatch[1]))) {
     diameterInches = Number(inMatch[1]);
+  } else if (ftMatch && Number.isFinite(Number(ftMatch[1]))) {
+    diameterInches = Number(ftMatch[1]) * 12;
   }
   const lbMatch = sizeText.match(
     /(?:weighing\s+approximately\s+|or\s+)?([\d,]+(?:\.\d+)?)\s*(?:lbs?\b|pounds?\b)/i,
@@ -904,6 +894,10 @@ export function enrichAsgardEventFromDetailHtml(
   const ozMatch = sizeText.match(
     /(?:weighing\s+approximately\s+|or\s+)?([\d,]+(?:\.\d+)?)\s*(?:oz\b|ounces?\b)/i,
   );
+  const tonMatch = sizeText.match(
+    /weighing\s+(?:about\s+|approximately\s+|nearly\s+)?([\d,]+(?:\.\d+)?)\s*(metric\s+)?tons?\b/i,
+  );
+  const overATon = /weighing\s+over\s+a\s+ton\b/i.test(sizeText);
   if (lbMatch) {
     massLb = Number(lbMatch[1].replace(/,/g, ''));
     if (Number.isFinite(massLb)) {
@@ -915,6 +909,16 @@ export function enrichAsgardEventFromDetailHtml(
       massLb = Math.round((oz / 16) * 1000) / 1000;
       massKg = Math.round(oz * 0.0283495 * 1000) / 1000;
     }
+  } else if (tonMatch) {
+    const tons = Number(tonMatch[1].replace(/,/g, ''));
+    const isMetric = Boolean(tonMatch[2]);
+    if (Number.isFinite(tons)) {
+      massKg = Math.round(tons * (isMetric ? 1000 : 907.185) * 100) / 100;
+      massLb = Math.round((massKg / 0.45359237) * 10) / 10;
+    }
+  } else if (overATon) {
+    massKg = 1000;
+    massLb = 2204.6;
   }
 
   const tntMatch = cleaned.match(
@@ -975,6 +979,20 @@ export function enrichAsgardEventFromDetailHtml(
       event.trajectory.entryVelocity = vel;
       if (!event.confidence.fields.includes('vel')) {
         event.confidence.fields.push('vel');
+      }
+    }
+  } else {
+    const mphNarrative = cleaned.match(
+      /at\s+([\d,]+(?:\.\d+)?)\s*(?:miles?\s+per\s+hour|mph)\b/i,
+    );
+    if (mphNarrative) {
+      const mph = Number(mphNarrative[1].replace(/,/g, ''));
+      if (Number.isFinite(mph) && mph > 5000) {
+        event.trajectory.entryVelocity =
+          Math.round(mph * 0.00044704 * 10) / 10;
+        if (!event.confidence.fields.includes('vel')) {
+          event.confidence.fields.push('vel');
+        }
       }
     }
   }
