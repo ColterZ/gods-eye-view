@@ -142,6 +142,20 @@ export function createMeteorPanel({
       content.appendChild(b);
     }
 
+    const vpShotBtn = btn(
+      '📷 SCREENSHOT',
+      'data-chip',
+      t('Capture a screenshot of the current viewport'),
+    );
+    vpShotBtn.dataset.screenshotMode = 'viewport';
+    const boxShotBtn = btn(
+      '📐 BOX CAPTURE',
+      `data-chip${globalThis.window?.__gevScreenshot?.isActive?.() ? ' active' : ''}`,
+      t('Click and drag a rectangle on the ground to generate an image'),
+    );
+    boxShotBtn.dataset.screenshotMode = 'box';
+    content.append(vpShotBtn, boxShotBtn);
+
     return section;
   }
 
@@ -631,6 +645,18 @@ export function createMeteorPanel({
   /*  Input event delegation                                             */
   /* ------------------------------------------------------------------ */
   body.addEventListener('click', (event) => {
+    const shotChip = event.target?.closest?.('[data-screenshot-mode]');
+    if (shotChip) {
+      const mode = shotChip.dataset.screenshotMode;
+      if (mode === 'viewport') {
+        globalThis.window?.__gevScreenshot?.captureViewport?.({ openModal: true });
+      } else if (mode === 'box') {
+        const active = globalThis.window?.__gevScreenshot?.startBoxCapture?.();
+        shotChip.classList.toggle('active', !!active);
+      }
+      return;
+    }
+
     const chip = event.target?.closest?.('.data-chip');
     if (chip && !chip.disabled) {
       const params = JSON.parse(chip.dataset.params || '{}');

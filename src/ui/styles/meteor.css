@@ -458,3 +458,169 @@
   background: rgba(255, 140, 60, 0.12);
   color: var(--text-secondary);
 }
+
+/* ------------------------------------------------------------------ */
+/*  Viewport & Ground-Box Screenshot Tool                              */
+/* ------------------------------------------------------------------ */
+
+body.gev-screenshot-box-active,
+body.gev-screenshot-box-active #cesiumContainer,
+body.gev-screenshot-box-active #cesiumContainer canvas {
+  cursor: crosshair !important;
+}
+
+.gev-screenshot-banner {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 950;
+  padding: 7px 14px;
+  border: 1px solid rgba(255, 158, 61, 0.65);
+  border-radius: 6px;
+  background: rgba(8, 16, 26, 0.88);
+  backdrop-filter: blur(12px);
+  color: #ffe8d6;
+  font: 10px/1.4 var(--font-mono);
+  letter-spacing: 0.4px;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+.gev-screenshot-rubberband {
+  position: fixed;
+  z-index: 940;
+  border: 1.5px dashed #ff9e3d;
+  background: rgba(255, 158, 61, 0.12);
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.gev-screenshot-rubberband-label {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 4px);
+  white-space: nowrap;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 158, 61, 0.55);
+  border-radius: 4px;
+  background: rgba(8, 16, 26, 0.9);
+  color: #ffe8d6;
+  font: 9px/1.3 var(--font-mono);
+}
+
+.gev-screenshot-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 9, 16, 0.72);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+
+.gev-screenshot-modal[hidden],
+.gev-screenshot-banner[hidden],
+.gev-screenshot-rubberband[hidden] {
+  display: none !important;
+}
+
+.gev-screenshot-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(920px, 90vw);
+  max-height: 86vh;
+  padding: 14px;
+  border: 1px solid var(--glass-border, rgba(255, 158, 61, 0.4));
+  border-radius: var(--panel-radius, 10px);
+  background: var(--glass-bg, rgba(10, 18, 30, 0.94));
+  box-shadow: 0 18px 56px rgba(0, 0, 0, 0.72);
+  color: var(--text-primary);
+  font: 10px/1.4 var(--font-mono);
+}
+
+.gev-screenshot-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gev-screenshot-title {
+  font-weight: 600;
+  color: #ffe8d6;
+  letter-spacing: 0.8px;
+}
+
+.gev-screenshot-meta {
+  flex: 1 1 auto;
+  color: var(--text-dim);
+  font-size: 9px;
+}
+
+.gev-screenshot-close {
+  padding: 2px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.gev-screenshot-preview-wrap {
+  overflow: auto;
+  max-height: 68vh;
+  border: 1px solid rgba(255, 158, 61, 0.25);
+  border-radius: 6px;
+  background: #050a12;
+}
+
+.gev-screenshot-img {
+  display: block;
+  max-width: 100%;
+  max-height: 66vh;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.gev-screenshot-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.gev-screenshot-btn {
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 140, 60, 0.35);
+  border-radius: 4px;
+  background: rgba(255, 140, 60, 0.08);
+  color: var(--text-secondary);
+  font: 9px/1.3 var(--font-mono);
+  cursor: pointer;
+}
+
+.gev-screenshot-btn.primary {
+  border-color: rgba(255, 158, 61, 0.75);
+  background: rgba(255, 140, 60, 0.24);
+  color: #ffe8d6;
+}
+
+.gev-screenshot-btn:hover {
+  border-color: rgba(255, 158, 61, 0.85);
+  background: rgba(255, 140, 60, 0.2);
+}
+
+.gev-screenshot-status {
+  margin-left: auto;
+  color: #ffd9a8;
+  font-size: 9px;
+}
+
+#top-center-actions #screenshot-box-btn.active {
+  border-color: rgba(255, 158, 61, 0.85);
+  color: #ffd9a8;
+}
