@@ -3,6 +3,7 @@ import { createSource } from './source.js';
 import { createRendering } from './rendering.js';
 import { createControls } from './controls.js';
 import { createLifecycle } from './lifecycle.js';
+import { createMeteorPanel } from './panel.js';
 import { LAYER_ID } from './policy.js';
 
 /**
@@ -22,10 +23,29 @@ export function createMeteorsLayer({ services, feed, ...config }) {
   components.controls = createControls(context);
   components.lifecycle = createLifecycle(context);
 
+  // Mount the right-rail context panel for meteor/dark-flight controls.
+  // Created eagerly (cheap DOM) and hidden/shown via setEnabled; it syncs its
+  // content from the layer's row-controls descriptor on every refresh.
+  if (typeof document !== 'undefined') {
+    const container = document.getElementById('meteor-panel');
+    const countBadge = document.getElementById('meteor-panel-count');
+    const body = document.getElementById('meteor-panel-body');
+    if (container) {
+      components.panel = createMeteorPanel({
+        container,
+        countBadge,
+        body,
+        setLayerParams: (id, params, options) =>
+          context.services?.setLayerParams?.(id, params, options),
+      });
+    }
+  }
+
   return Object.assign(
     {},
     components.controls.methods,
     components.lifecycle.methods,
+    components.panel ? { panel: components.panel } : {},
   );
 }
 

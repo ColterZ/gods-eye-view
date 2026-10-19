@@ -1,3 +1,4 @@
+import * as Cesium from 'cesium';
 import {
   LAYER_ID,
   LAYER_NAME,
@@ -30,6 +31,9 @@ import { runMultiModelDarkFlight } from './darkFlight.js';
 import {
   getFoundStonesForEvent,
   setCustomFoundStones,
+  addFoundStoneForEvent,
+  deleteFoundStoneForEvent,
+  resetFoundStonesForEvent,
 } from './foundStones.js';
 import {
   computeAerodynamicBreakupPhysics,
@@ -68,6 +72,27 @@ export function createControls({ layerState, services, components, config }) {
       return;
     }
     const targetId = ev.id;
+    const cachedSounding =
+      layerState._darkFlightResult?.eventId === targetId
+        ? layerState._darkFlightResult.sounding
+        : null;
+    if (cachedSounding) {
+      layerState._darkFlightLoading = false;
+      layerState._darkFlightResult = runMultiModelDarkFlight(
+        ev,
+        cachedSounding,
+        {
+          allEvents: layerState._events,
+          autoFit: layerState._darkFlightAutoFit,
+          customTuning: layerState._customTuning,
+        },
+      );
+      components.rendering.renderDarkFlight();
+      if (fly) flyToEvent(targetId);
+      layerState.notify();
+      return;
+    }
+
     layerState._darkFlightLoading = true;
     // Render an immediate synchronous Dark-Flight pass so visuals appear instantly
     // while the historical upper-air wind sounding resolves in the background.
@@ -78,6 +103,7 @@ export function createControls({ layerState, services, components, config }) {
       layerState._darkFlightResult = runMultiModelDarkFlight(ev, null, {
         allEvents: layerState._events,
         autoFit: false,
+        customTuning: layerState._customTuning,
       });
       components.rendering.renderDarkFlight();
       if (fly) flyToEvent(targetId);
@@ -99,6 +125,7 @@ export function createControls({ layerState, services, components, config }) {
       layerState._darkFlightResult = runMultiModelDarkFlight(ev, sounding, {
         allEvents: layerState._events,
         autoFit: layerState._darkFlightAutoFit,
+        customTuning: layerState._customTuning,
       });
       components.rendering.renderDarkFlight();
       if (fly) flyToEvent(targetId);
@@ -285,17 +312,26 @@ export function createControls({ layerState, services, components, config }) {
 
       if (params.toggleAutoFit === true) {
         layerState._darkFlightAutoFit = !layerState._darkFlightAutoFit;
+        layerState._customTuning = null;
         layerState._darkFlightActive = true;
         executeDarkFlightForSelected();
         changed = true;
       } else if (typeof params.autoFit === 'boolean') {
-        if (layerState._darkFlightAutoFit !== params.autoFit) {
-          layerState._darkFlightAutoFit = params.autoFit;
-          if (layerState._darkFlightActive) {
-            executeDarkFlightForSelected();
-          }
-          changed = true;
-        }
+        layerState._darkFlightAutoFit = params.autoFit;
+        layerState._customTuning = null;
+        layerState._darkFlightActive = true;
+        executeDarkFlightForSelected();
+        changed = true;
+      }
+
+      if (params.customTuning !== undefined) {
+        layerState._customTuning =
+          params.customTuning && typeof params.customTuning === 'object'
+            ? { ...params.customTuning }
+            : null;
+        layerState._darkFlightActive = true;
+        executeDarkFlightForSelected();
+        changed = true;
       }
 
       if (params.cycleGroundLabels === true) {
@@ -354,12 +390,122 @@ export function createControls({ layerState, services, components, config }) {
       }
 
       if (Array.isArray(params.setFoundStones)) {
-        const targetId = params.eventId || layerState._selectedEventId;
-        if (targetId) {
-          setCustomFoundStones(targetId, params.setFoundStones);
+        const sel = selectedEvent();
+        const target = sel || params.eventId || layerState._selectedEventId;
+        if (target) {
+          setCustomFoundStones(target, params.setFoundStones);
           layerState._darkFlightActive = true;
           executeDarkFlightForSelected();
           changed = true;
+        }
+      }
+
+      if (params.addFoundStone) {
+        const sel = selectedEvent();
+        if (sel) {
+          addFoundStoneForEvent(
+            sel,
+            typeof params.addFoundStone === 'object'
+              ? params.addFoundStone
+              : {},
+          );
+          layerState._darkFlightActive = true;
+          executeDarkFlightForSelected();
+          changed = true;
+        }
+      }
+
+      if (typeof params.deleteFoundStone === 'string') {
+        const sel = selectedEvent();
+        if (sel) {
+          deleteFoundStoneForEvent(sel, params.deleteFoundStone);
+          layerState._darkFlightActive = true;
+          executeDarkFlightForSelected();
+          changed = true;
+        }
+      }
+
+      if (params.resetFoundStones === true) {
+        const sel = selectedEvent();
+        if (sel) {
+          resetFoundStonesForEvent(sel);
+          layerState._customTuning = null;
+          layerState._darkFlightActive = true;
+          executeDarkFlightForSelected();
+          changed = true;
+        }
+      }
+
+      if (typeof params.removeStoneId === 'string') {
+        const sel = selectedEvent();
+        if (sel) {
+          deleteFoundStoneForEvent(sel, params.removeStoneId);
+          layerState._darkFlightActive = true;
+          executeDarkFlightForSelected();
+          changed = true;
+        }
+      }
+
+      if (params.setCustomTuning && typeof params.setCustomTuning === 'object') {
+        const sel = selectedEvent();
+        if (sel) {
+          layerState._customTuning = Object.assign(
+            {},
+            layerState._customTuning,
+            params.setCustomTuning,
+          );
+          layerState._darkFlightAutoFit = false;
+          layerState._darkFlightActive = true;
+          executeDarkFlightForSelected();
+          changed = true;
+        }
+      }
+
+      if (params.flyToStone === true) {
+        const sel = selectedEvent();
+        const stoneId = params.stoneId;
+        if (sel && stoneId) {
+          const stones = getFoundStonesForEvent(sel);
+          const stone = stones.find((s) => (s.id || s.label) === stoneId);
+          if (stone && Number.isFinite(stone.latitude) && Number.isFinite(stone.longitude)) {
+            const viewer = layerState._viewer;
+            if (viewer) {
+              const rangeM = Math.max(400, 1200);
+              const center = Cesium.Cartesian3.fromDegrees(
+                stone.longitude,
+                stone.latitude,
+                500,
+              );
+              viewer.camera.flyToBoundingSphere(
+                new Cesium.BoundingSphere(center, rangeM * 0.45),
+                { duration: 1.0 },
+              );
+            }
+          }
+        }
+        changed = true;
+      }
+
+      if (
+        params.flyToLatLon &&
+        Number.isFinite(Number(params.flyToLatLon.lat)) &&
+        Number.isFinite(Number(params.flyToLatLon.lon))
+      ) {
+        const viewer = layerState._viewer;
+        if (viewer) {
+          const rangeM = Math.max(
+            600,
+            Number(params.flyToLatLon.rangeM) || 2600,
+          );
+          const center = Cesium.Cartesian3.fromDegrees(
+            Number(params.flyToLatLon.lon),
+            Number(params.flyToLatLon.lat),
+            680,
+          );
+          viewer.camera.flyToBoundingSphere(
+            new Cesium.BoundingSphere(center, rangeM * 0.45),
+            { duration: 1.1 },
+          );
         }
       }
 
@@ -421,7 +567,37 @@ export function createControls({ layerState, services, components, config }) {
       return layerState._filteredEvents.slice(0, limit).map(mapAnalystRecord);
     },
 
-    getRowControls() {
+    getRowControls(options = {}) {
+      const fullDescriptor = this._buildFullRowControls();
+      const hasRightRail =
+        typeof document !== 'undefined' &&
+        !!document.getElementById?.('right-context-rail');
+
+      if (!options?.forRightPanel && hasRightRail) {
+        // Push the full meteor descriptor to the right-rail panel, including
+        // the dark-flight, stone-fit and validation sub-blocks that the panel
+        // renders as collapsible sections.
+        const panelDescriptor = Object.assign({}, fullDescriptor, {
+          darkFlight: layerState._darkFlightResult || null,
+          stoneFit: (layerState._darkFlightResult || {}).stoneFit || null,
+          validation: (layerState._darkFlightResult || {}).validation || null,
+        });
+        components.panel?.sync?.(panelDescriptor);
+        // Show / hide the meteor panel based on whether the layer is enabled.
+        if (layerState._enabled) components.panel?.setEnabled?.(true);
+        else components.panel?.setEnabled?.(false);
+        return {
+          readout: true,
+          chips: [],
+          legend: [],
+          info: '',
+          list: null,
+        };
+      }
+      return fullDescriptor;
+    },
+
+    _buildFullRowControls() {
       const windowSpec = resolveTimeWindow(layerState._timeWindow);
       const sourceSpec = resolveSourceFilter(layerState._sourceFilter);
       const filtered = layerState._filteredEvents;

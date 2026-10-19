@@ -39,12 +39,14 @@ export function createMeteorsState({ services, config }) {
   layerState._darkFlightActive = false;
   layerState._darkFlightMode = 'all';
   layerState._darkFlightAutoFit = true;
+  layerState._customTuning = null;
   layerState._groundLabelsMode = 'compact';
   layerState._darkFlightLoading = false;
   layerState._darkFlightResult = null;
   layerState._darkFlightEntities = [];
   layerState._sceneDirector = null;
   layerState._syncedScenesCount = 0;
+  layerState._rightPanel = null;
 
   layerState.notify = () => {
     layerState._listener?.();
