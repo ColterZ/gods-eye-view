@@ -246,7 +246,16 @@ export function integrateFragmentDarkFlight({
 }) {
   const azRad = azimuthDeg * DEG_TO_RAD;
   const elevRad = Math.max(5, Math.min(89, entryAngleDeg)) * DEG_TO_RAD;
-  const startSpeed = Math.min(Math.max(terminalSpeedMs, 200), 3200);
+  // Smaller fragments have higher area-to-mass ratio (A/m ∝ m^-1/3) and decelerate
+  // out of hypersonic forward motion much faster during breakup than large 1 kg blocks.
+  const massSpeedFactor = Math.max(
+    0.25,
+    Math.min(1.65, Math.pow(Math.max(0.001, massKg) / 0.08, 0.34)),
+  );
+  const startSpeed = Math.min(
+    Math.max(terminalSpeedMs * massSpeedFactor, 110),
+    3200,
+  );
   const vHoriz = startSpeed * Math.cos(elevRad);
 
   const state = {
@@ -720,49 +729,81 @@ export function runMultiModelDarkFlight(
 
   // REGIME B: Full 3-Model Strewn Field (Deterministic Spine + Monte Carlo + Cross-Calibration)
   // Also compute Under (-1σ compact/low-wind) and Over (+1σ tabular/high-wind) boundary rails
-  // for each mass band so the ground view displays explicit Over/Under margins of error.
+  // for each mass band, and simulate both Sub-Bolide F1 (Upper Flare) and Sub-Bolide F2 (Terminal)
+  // when multi-stage fragmentation is active so lighter upper-flare finds are fully inside the simulation.
   const underSounding = scaleSoundingWind(activeSounding, 0.84);
   const overSounding = scaleSoundingWind(activeSounding, 1.16);
   const cosLat = Math.max(0.05, Math.cos(effectiveLat * DEG_TO_RAD));
 
+  const upperFlareOffsetKm = Number(stoneFit?.tuning?.upperFlareOffsetKm) || 0;
+  const upRangeAzRad = ((effectiveAzimuthDeg + 180) % 360) * DEG_TO_RAD;
+  const elevRad = Math.max(10, Math.min(85, entryAngleDeg || 35)) * DEG_TO_RAD;
+  const flare1Lat =
+    effectiveLat +
+    (upperFlareOffsetKm * 1000 * Math.cos(upRangeAzRad)) / METERS_PER_DEG_LAT;
+  const flare1Lon =
+    effectiveLon +
+    (upperFlareOffsetKm * 1000 * Math.sin(upRangeAzRad)) /
+      (METERS_PER_DEG_LAT * cosLat);
+  const flare1AltM = Math.min(
+    72000,
+    effectiveAltM + upperFlareOffsetKm * 1000 * Math.tan(elevRad),
+  );
+  const flare1Sounding = scaleSoundingWind(activeSounding, 1.22);
+
   const massSweep = CANONICAL_MASS_SWEEP.map((band) => {
+    // When multi-stage fragmentation (upperFlareOffsetKm > 0) is active, lighter fragments
+    // (< 45g) progressively detach from Sub-Bolide F1 (Upper Flare), while heavier fragments
+    // (>= 50g) detach from Sub-Bolide F2 (Main Terminal Breakup).
+    const isUpperFlareBand = upperFlareOffsetKm > 0 && band.massKg < 0.045;
+    const relLat = isUpperFlareBand ? flare1Lat : effectiveLat;
+    const relLon = isUpperFlareBand ? flare1Lon : effectiveLon;
+    const relAltM = isUpperFlareBand ? flare1AltM : effectiveAltM;
+    const relSpeedMs = isUpperFlareBand
+      ? effectiveSpeedMs * 0.72
+      : effectiveSpeedMs;
+    const relShape = isUpperFlareBand
+      ? effectiveShapeFactor * 1.12
+      : effectiveShapeFactor;
+    const relSounding = isUpperFlareBand ? flare1Sounding : activeSounding;
+
     const res = integrateFragmentDarkFlight({
-      terminalLat: effectiveLat,
-      terminalLon: effectiveLon,
-      terminalAltM: effectiveAltM,
-      terminalSpeedMs: effectiveSpeedMs,
+      terminalLat: relLat,
+      terminalLon: relLon,
+      terminalAltM: relAltM,
+      terminalSpeedMs: relSpeedMs,
       azimuthDeg: effectiveAzimuthDeg,
       entryAngleDeg,
       massKg: band.massKg,
-      shapeFactor: effectiveShapeFactor,
-      sounding: activeSounding,
+      shapeFactor: relShape,
+      sounding: relSounding,
       recordTrack: true,
     });
     if (!res) return null;
 
     const underImp = integrateFragmentDarkFlight({
-      terminalLat: effectiveLat,
-      terminalLon: effectiveLon,
-      terminalAltM: effectiveAltM,
-      terminalSpeedMs: effectiveSpeedMs * 1.1,
+      terminalLat: relLat,
+      terminalLon: relLon,
+      terminalAltM: relAltM,
+      terminalSpeedMs: relSpeedMs * 1.1,
       azimuthDeg: (effectiveAzimuthDeg - 2.2 + 360) % 360,
       entryAngleDeg: Math.min(88, entryAngleDeg + 1.5),
       massKg: band.massKg,
-      shapeFactor: Math.max(0.8, effectiveShapeFactor * 0.82),
-      sounding: underSounding,
+      shapeFactor: Math.max(0.8, relShape * 0.82),
+      sounding: scaleSoundingWind(relSounding, 0.84),
       recordTrack: false,
     });
 
     const overImp = integrateFragmentDarkFlight({
-      terminalLat: effectiveLat,
-      terminalLon: effectiveLon,
-      terminalAltM: effectiveAltM,
-      terminalSpeedMs: effectiveSpeedMs * 0.9,
+      terminalLat: relLat,
+      terminalLon: relLon,
+      terminalAltM: relAltM,
+      terminalSpeedMs: relSpeedMs * 0.9,
       azimuthDeg: (effectiveAzimuthDeg + 2.2 + 360) % 360,
       entryAngleDeg: Math.max(8, entryAngleDeg - 1.5),
       massKg: band.massKg,
-      shapeFactor: effectiveShapeFactor * 1.24,
-      sounding: overSounding,
+      shapeFactor: relShape * 1.24,
+      sounding: scaleSoundingWind(relSounding, 1.16),
       recordTrack: false,
     });
 
@@ -785,6 +826,7 @@ export function runMultiModelDarkFlight(
       ...res,
       label: band.label,
       color: band.color,
+      subBolideId: isUpperFlareBand ? 'F1' : 'F2',
       estDiameterCm,
       underPoint: underImp ? { lat: underImp.lat, lon: underImp.lon } : null,
       overPoint: overImp ? { lat: overImp.lat, lon: overImp.lon } : null,
@@ -793,32 +835,69 @@ export function runMultiModelDarkFlight(
   }).filter(Boolean);
 
   const monteCarloImpacts = [];
+  const f1Impacts = [];
+  const f2Impacts = [];
   const seedBase =
     event.id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0) || 42;
   for (let i = 0; i < nFragments; i++) {
     const rng = new SeededRng(fragmentSeed(seedBase, i));
     const u = Math.min(0.999, rng.next());
-    const massKg = Math.min(1, Math.max(0.002, 0.002 * Math.pow(1 - u, -1.1)));
+    const useF1 = upperFlareOffsetKm > 0 && i % 2 === 1;
+    const massKg = useF1
+      ? Math.min(0.065, Math.max(0.002, 0.002 * Math.pow(1 - u, -0.85)))
+      : Math.min(1, Math.max(0.008, 0.008 * Math.pow(1 - u, -1.1)));
     const imp = integrateFragmentDarkFlight({
-      terminalLat: effectiveLat + rng.gaussian() * 0.0025,
-      terminalLon: effectiveLon + rng.gaussian() * 0.0025,
-      terminalAltM: effectiveAltM + rng.gaussian() * 250,
-      terminalSpeedMs: effectiveSpeedMs * (1 + rng.gaussian() * 0.06),
+      terminalLat:
+        (useF1 ? flare1Lat : effectiveLat) + rng.gaussian() * 0.0025,
+      terminalLon:
+        (useF1 ? flare1Lon : effectiveLon) + rng.gaussian() * 0.0025,
+      terminalAltM:
+        (useF1 ? flare1AltM : effectiveAltM) + rng.gaussian() * 250,
+      terminalSpeedMs:
+        (useF1 ? effectiveSpeedMs * 0.72 : effectiveSpeedMs) *
+        (1 + rng.gaussian() * 0.06),
       azimuthDeg: effectiveAzimuthDeg + rng.gaussian() * 2.2,
       entryAngleDeg: entryAngleDeg + rng.gaussian() * 1.8,
       massKg,
       shapeFactor: Math.max(
         0.85,
-        effectiveShapeFactor + rng.gaussian() * 0.15,
+        (useF1 ? effectiveShapeFactor * 1.12 : effectiveShapeFactor) +
+          rng.gaussian() * 0.15,
       ),
-      sounding: activeSounding,
+      sounding: useF1 ? flare1Sounding : activeSounding,
       recordTrack: false,
     });
-    if (imp) monteCarloImpacts.push(imp);
+    if (imp) {
+      imp.subBolideId = useF1 ? 'F1' : 'F2';
+      monteCarloImpacts.push(imp);
+      if (useF1) f1Impacts.push(imp);
+      else f2Impacts.push(imp);
+    }
   }
 
   const ellipse2Sigma = computeStrewnFieldEllipse(monteCarloImpacts, 2);
   const ellipseInnerCore = computeStrewnFieldEllipse(monteCarloImpacts, 1);
+  const subBolides =
+    upperFlareOffsetKm > 0
+      ? [
+          {
+            id: 'F1',
+            label: `Sub-Bolide F1 (Upper Flare · ${(flare1AltM / 1000).toFixed(1)} km)`,
+            lat: Math.round(flare1Lat * 100000) / 100000,
+            lon: Math.round(flare1Lon * 100000) / 100000,
+            altKm: Math.round((flare1AltM / 1000) * 10) / 10,
+            ellipse2Sigma: computeStrewnFieldEllipse(f1Impacts, 2),
+          },
+          {
+            id: 'F2',
+            label: `Sub-Bolide F2 (Terminal Breakup · ${(effectiveAltM / 1000).toFixed(1)} km)`,
+            lat: Math.round(effectiveLat * 100000) / 100000,
+            lon: Math.round(effectiveLon * 100000) / 100000,
+            altKm: Math.round((effectiveAltM / 1000) * 10) / 10,
+            ellipse2Sigma: computeStrewnFieldEllipse(f2Impacts, 2),
+          },
+        ]
+      : [];
 
   // Cross-reference 1: Spine vs Monte Carlo centroid agreement
   const spine100g =
@@ -886,6 +965,7 @@ export function runMultiModelDarkFlight(
     monteCarloImpacts,
     ellipse2Sigma,
     ellipseInnerCore,
+    subBolides,
     foundStones,
     stoneFit,
     calibration: {

@@ -400,12 +400,12 @@ export function autoFitDarkFlightToFoundStones({
   };
   let bestEval = baseline;
 
-  // Fast coordinate-descent + joint multi-stage fragmentation search using dtSec=2.0 (recordTrack=false)
-  // so auto-fit completes in <100 ms on the main thread, then re-evaluates bestTuning at dtSec=0.5 with tracks.
-  const windScales = [0.7, 1.0, 1.3, 1.6];
-  const shapeFactors = [0.9, 1.15, 1.45];
-  const azDeltas = [-8, -4, 0, 4, 8, 12];
-  const speedScales = [0.4, 0.75, 1.0, 1.25];
+  // Fast coordinate-descent + joint multi-stage fragmentation search using dtSec=1.0 (recordTrack=false)
+  // so RK4 remains numerically exact at 45.5 km while completing in <600 ms on the main thread.
+  const windScales = [0.6, 0.9, 1.25];
+  const shapeFactors = [1.15, 1.4];
+  const azDeltas = [0, 6, 12];
+  const speedScales = [0.85, 1.25, 1.6];
 
   for (const windScale of windScales) {
     for (const shapeFactor of shapeFactors) {
@@ -432,7 +432,7 @@ export function autoFitDarkFlightToFoundStones({
             sounding,
             tuning,
             recordTrack: false,
-            dtSec: 2.0,
+            dtSec: 1.0,
           });
           if (
             res.rmsErrorM !== null &&
@@ -448,11 +448,11 @@ export function autoFitDarkFlightToFoundStones({
 
   // Stage 2: Fine-tune terminus release point (latDeltaDeg, lonDeltaDeg) jointly with
   // speedScale, windScale, and Multi-Stage Fragmentation (upperFlareOffsetKm for 2-flare breakups)
-  const latOffsets = [-0.012, -0.005, 0, 0.005];
-  const lonOffsets = [0, 0.016, 0.026, 0.032];
-  const stage2Speeds = [0.75, 1.1, 1.45];
-  const stage2Winds = [0.55, 0.85, 1.1];
-  const upperFlareOffsetsKm = stones.length >= 2 ? [0, 1.8, 2.8] : [0];
+  const latOffsets = [-0.008, -0.003, 0, 0.004];
+  const lonOffsets = [0, 0.02, 0.032];
+  const stage2Speeds = [1.0, 1.35, 1.6];
+  const stage2Winds = [0.55, 0.85];
+  const upperFlareOffsetsKm = stones.length >= 2 ? [0, 1.4, 2.2] : [0];
   const baseBest = { ...bestTuning };
 
   for (const latDeltaDeg of latOffsets) {
@@ -480,7 +480,7 @@ export function autoFitDarkFlightToFoundStones({
               sounding,
               tuning,
               recordTrack: false,
-              dtSec: 2.0,
+              dtSec: 1.0,
             });
             if (
               res.rmsErrorM !== null &&

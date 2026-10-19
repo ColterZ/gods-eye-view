@@ -397,6 +397,88 @@ export function createRendering({ layerState, services, components, config }) {
         );
       }
 
+      // Render per-Sub-Bolide 2σ Lobe Ellipses + 3D Sub-Bolide Breakup Origins when multiple fragmentations exist
+      if (Array.isArray(df.subBolides) && df.subBolides.length > 0) {
+        const showCompact =
+          (layerState._groundLabelsMode || 'compact') === 'compact';
+        for (const sb of df.subBolides) {
+          const sbColor = Cesium.Color.fromCssColorString(
+            sb.id === 'F1' ? '#34d399' : '#f59e0b',
+          );
+          // 3D Sub-Bolide breakup origin marker along the atmospheric trajectory
+          const sbOriginEnt = layerState._dataSource.entities.add({
+            id: `df:${df.eventId}:subbolide:origin:${sb.id}`,
+            position: Cesium.Cartesian3.fromDegrees(
+              sb.lon,
+              sb.lat,
+              sb.altKm * 1000,
+            ),
+            point: {
+              pixelSize: 9,
+              color: sbColor,
+              outlineColor: Cesium.Color.WHITE,
+              outlineWidth: 2,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            },
+            label: showCompact
+              ? {
+                  text: `✦ ${sb.label}`,
+                  font: '600 10px ui-monospace, SFMono-Regular, Menlo, monospace',
+                  fillColor: sbColor,
+                  outlineColor: Cesium.Color.BLACK,
+                  outlineWidth: 2,
+                  style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                  showBackground: true,
+                  backgroundColor: new Cesium.Color(0.03, 0.05, 0.09, 0.72),
+                  backgroundPadding: new Cesium.Cartesian2(5, 2),
+                  horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
+                  verticalOrigin: Cesium.VerticalOrigin.CENTER,
+                  pixelOffset: new Cesium.Cartesian2(10, 0),
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                  scaleByDistance: new Cesium.NearFarScalar(5000, 1.0, 140000, 0.5),
+                }
+              : undefined,
+          });
+          layerState._darkFlightEntities.push(sbOriginEnt);
+
+          const sbEl = sb.ellipse2Sigma;
+          if (sbEl && sbEl.semiMajorM >= sbEl.semiMinorM) {
+            const sbRing = makeGroundEllipsePositions(
+              sbEl.center.lat,
+              sbEl.center.lon,
+              sbEl.semiMajorM,
+              sbEl.semiMinorM,
+              sbEl.orientationDeg,
+              32,
+            );
+            layerState._darkFlightEntities.push(
+              layerState._dataSource.entities.add({
+                id: `df:${df.eventId}:subbolide:fill:${sb.id}`,
+                polygon: {
+                  hierarchy: new Cesium.PolygonHierarchy(sbRing.slice(0, -1)),
+                  classificationType: Cesium.ClassificationType.BOTH,
+                  material: sbColor.withAlpha(0.11),
+                  arcType: Cesium.ArcType.GEODESIC,
+                },
+              }),
+              layerState._dataSource.entities.add({
+                id: `df:${df.eventId}:subbolide:ring:${sb.id}`,
+                polyline: {
+                  positions: sbRing,
+                  width: 1.8,
+                  material: new Cesium.PolylineDashMaterialProperty({
+                    color: sbColor.withAlpha(0.85),
+                    dashLength: 10,
+                  }),
+                  clampToGround: true,
+                  classificationType: Cesium.ClassificationType.BOTH,
+                },
+              }),
+            );
+          }
+        }
+      }
+
       // Monte Carlo ensemble impact cloud (capped at 100 points for crisp frame pacing)
       const impacts = (df.monteCarloImpacts || []).slice(0, 100);
       for (let i = 0; i < impacts.length; i++) {
