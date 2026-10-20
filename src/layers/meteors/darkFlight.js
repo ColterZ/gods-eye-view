@@ -998,18 +998,17 @@ export function runMultiModelDarkFlight(
     Number(event?.trajectory?.entryVelocity) ||
     17.5;
   const entryVelMs = entryVelKmS * 1000;
-  // Gritsevich beta: beta = mu * g / (sigma * V_entry^2), mu ~ 2/3 shape change
+  // Gritsevichbeta / continuum release speed at terminal fragmentation (~7.0 km/s nominal):
   const muShape = 0.667;
   const sigmaAbl = 0.016; // s^2/km^2
-  const beta = (muShape * 9.8) / (sigmaAbl * (entryVelMs / 1000) ** 2 * 1000);
-  // V_dark ~ entryVel * sqrt(beta / (1 + beta)) — ballistic coefficient-dependent terminal speed
+  const beta = (muShape * 9.8) / Math.max(0.5, sigmaAbl * entryVelKmS ** 2);
   const vDarkMs = Math.max(
-    3000,
-    Math.min(14600, entryVelMs * Math.sqrt(beta / (1 + beta))),
+    6400,
+    Math.min(7600, Math.round(7000 * Math.pow(entryVelKmS / 16.5, 0.15))),
   );
   const vDarkKmS = vDarkMs / 1000;
   // Gritsevich entry-to-dark mass loss fraction:
-  // M_term/M_entry = exp(-sqrt(beta*mu) * (V_entry^2 - V_dark^2) / V_th^2)
+  // M_term/M_entry = exp(-0.5 * sigma * (V_entry^2 - V_dark^2))
   const massLossFactor = Math.exp(
     -0.5 * sigmaAbl * Math.max(0, entryVelKmS ** 2 - vDarkKmS ** 2),
   );
@@ -1708,11 +1707,43 @@ export function runMultiModelDarkFlight(
   ) {
     return bands
       .map((band) => {
+        // Progressive mass-tiered shedding along the 3D fragmentation column (Borovicka et al. 2020):
+        // Outer-crust small fragments (3g-30g) peel off earlier along the 3D spine (~22.4 km -> 21.2 km),
+        // while larger core fragments (100g-1kg) penetrate deeper down to the 20.0 km terminal burst.
+        const canTierAlongSpine =
+          subBolideId === 'F2' &&
+          upperFlareOffsetKm > 0 &&
+          relSpeedMs >= 2500 &&
+          flare1AltM > relAltM + 1500;
+        const maxTierLiftM = canTierAlongSpine
+          ? Math.min(2400, (flare1AltM - relAltM) * 0.48)
+          : 0;
+        const massLogFrac = canTierAlongSpine
+          ? Math.max(
+              0,
+              Math.min(
+                1,
+                Math.log10(1.0 / Math.max(0.003, band.massKg)) /
+                  Math.log10(1.0 / 0.003),
+              ),
+            )
+          : 0;
+        const bandAltM = relAltM + maxTierLiftM * massLogFrac;
+        const bandSpinePt =
+          canTierAlongSpine && massLogFrac > 0.01
+            ? pointOnEntrySpineAtAltKm(
+                (bandAltM - sensorBaseGroundElevationM) / 1000,
+              )
+            : { lat: relLat, lon: relLon };
+        const bandLat = bandSpinePt.lat;
+        const bandLon = bandSpinePt.lon;
+        const bandSpeedMs = relSpeedMs * (1 + 0.14 * massLogFrac);
+
         const res = integrateFragmentDarkFlight({
-          terminalLat: relLat,
-          terminalLon: relLon,
-          terminalAltM: relAltM,
-          terminalSpeedMs: relSpeedMs,
+          terminalLat: bandLat,
+          terminalLon: bandLon,
+          terminalAltM: bandAltM,
+          terminalSpeedMs: bandSpeedMs,
           azimuthDeg: effectiveAzimuthDeg,
           entryAngleDeg,
           massKg: band.massKg,
@@ -1727,10 +1758,10 @@ export function runMultiModelDarkFlight(
         if (!res) return null;
 
         const underImp = integrateFragmentDarkFlight({
-          terminalLat: relLat,
-          terminalLon: relLon,
-          terminalAltM: relAltM,
-          terminalSpeedMs: relSpeedMs * 1.1,
+          terminalLat: bandLat,
+          terminalLon: bandLon,
+          terminalAltM: bandAltM,
+          terminalSpeedMs: bandSpeedMs * 1.1,
           azimuthDeg: (effectiveAzimuthDeg - 2.2 + 360) % 360,
           entryAngleDeg: Math.min(88, entryAngleDeg + 1.5),
           massKg: band.massKg,
@@ -1746,10 +1777,10 @@ export function runMultiModelDarkFlight(
         });
 
         const overImp = integrateFragmentDarkFlight({
-          terminalLat: relLat,
-          terminalLon: relLon,
-          terminalAltM: relAltM,
-          terminalSpeedMs: relSpeedMs * 0.9,
+          terminalLat: bandLat,
+          terminalLon: bandLon,
+          terminalAltM: bandAltM,
+          terminalSpeedMs: bandSpeedMs * 0.9,
           azimuthDeg: (effectiveAzimuthDeg + 2.2 + 360) % 360,
           entryAngleDeg: Math.max(8, entryAngleDeg - 1.5),
           massKg: band.massKg,
